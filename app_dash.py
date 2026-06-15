@@ -1,11 +1,13 @@
 # ══════════════════════════════════════════════════════════════════
-#  حاسبة تكلفة شبكات تصريف السيول — Streamlit Version
-#  Eng. Ahmed Adam | 2025
+#  حاسبة تكلفة شبكات تصريف السيول — Streamlit + Folium Map
+#  Eng. Ahmed Adam | 2025 - 2026
 # ══════════════════════════════════════════════════════════════════
 import streamlit as st
 import json, math, os, tempfile, zipfile, base64
 from io import BytesIO
 import pandas as pd
+import folium
+from streamlit_folium import st_folium
 
 # ضبط إعدادات الصفحة في ستريمليت وتفعيل الاتجاه العربي (RTL)
 st.set_page_config(page_title="حاسبة شبكات السيول", layout="wide", initial_sidebar_state="collapsed")
@@ -19,8 +21,9 @@ PIPE_PRICES = {
 BOX_CHANNEL_PRICE  = 9336.0
 OPEN_CHANNEL_PRICE = 13052.0
 LINE_TYPES = {"pipe":"أنبوب", "box_channel":"قناة صندوقية", "open_channel":"قناة مفتوحة"}
+RLAT, RLON = 24.7136, 46.6753
 
-# ══ دوال حسابية ══
+# ══ دوال حسابية وجغرافية ══
 def hav(lon1, lat1, lon2, lat2):
     R = 6371000; p1, p2 = math.radians(lat1), math.radians(lat2)
     a = math.sin(math.radians(lat2-lat1)/2)**2 + math.cos(p1)*math.cos(p2)*math.sin(math.radians(lon2-lon1)/2)**2
@@ -172,13 +175,13 @@ def gen_pdf(segments_data, stot, total_cost):
 # واجهة المستخدم بنظام Streamlit
 # ══════════════════════════════════════════════════════════════════
 st.title("🌊 حاسبة تكلفة شبكات تصريف السيول")
-st.caption("برمجة: م. أحمد آدم | تحليل الشبكات الحسابية وتقدير التكاليف")
+st.caption("برمجة: م. أحمد آدم | تحليل الشبكات الحسابية الجغرافية وتقدير التكاليف")
 
 # نظام إدارة الرفع للملفات
 uploaded_file = st.file_uploader("📂 ارفع ملف بيانات الشبكة (GeoJSON أو Shapefile مضغوط .zip)", type=["geojson", "json", "zip"])
 
 if uploaded_file is not None:
-    # قراءة البيانات وتخزينها في جلسة العمل
+    # استخدام session_state لتجنب إعادة التحميل عند أي تحديث في الحقول
     if "feats" not in st.session_state:
         ext = uploaded_file.name.lower().rsplit(".", 1)[-1]
         if ext in ("geojson", "json"):
@@ -192,33 +195,65 @@ if uploaded_file is not None:
         st.success(f"✅ تم تحميل {len(feats)} خط بنجاح!")
         
         # إنشاء التبويبات
-        tab1, tab2 = st.tabs(["🗺️ إعدادات الحساب والتكاليف", "📊 جدول بيانات المخطط"])
+        tab1, tab2 = st.tabs(["🗺️ الخريطة وإعدادات التكاليف", "📊 جدول بيانات المخطط"])
         
         with tab1:
+            st.subheader("🗺️ عرض جيوغرافي للشبكة المرفوعة")
+            
+            # حساب مركز الخريطة التلقائي بناءً على إحداثيات الملف المرفوع
+            all_coords = [c for f in feats for c in f["coords"]]
+            if all_coords:
+                center_lat = sum(c[1] for c in all_coords) / len(all_coords)
+                center_lon = sum(c[0] for c in all_coords) / len(all_coords)
+                zoom_start = 13
+            else:
+                center_lat, center_lon, zoom_start = RLAT, RLON, 10
+            
+            # إنشاء خريطة Folium التفاعلية
+            m = folium.Map(location=[center_lat, center_lon], zoom_start=zoom_start, control_scale=True)
+            
+            # إضافة الخطوط الجغرافية للشبكة على الخريطة
+            for f in feats:
+                # قلب الإحداثيات لتتوافق مع Folium (Lat, Lon) بدلاً من (Lon, Lat)
+                folium_positions = [[c[1], c[0]] for c in f["coords"]]
+                tooltip_text = f"خط #{f['i']} | الطول: {f['len']:,.1f} م"
+                
+                folium.Polyline(
+                    locations=folium_positions,
+                    color="#1a5fa8",
+                    weight=5,
+                    opacity=0.8,
+                    tooltip=tooltip_text
+                ).add_to(m)
+            
+            # عرض الخريطة داخل بيئة ستريمليت
+            st_folium(m, height=400, use_container_width=True)
+            
+            st.markdown("---")
             st.subheader("⚙️ تخصيص أسعار وأنواع خطوط الشبكة")
             
-            # مصفوفة لحفظ اختيارات المستخدم لكل خط
-            meta_results = {}
+            # مصفوفة لحفظ اختيارات المستخدم وإجمالي التكاليف
             total_length = 0.0
             total_network_cost = 0.0
             segments_summary = []
             
+            # توليد خيارات الإدخال لكل خط تحت الخريطة
             for f in feats:
                 fi = f["i"]
-                st.markdown(f"**📍 الخط رقم #{fi} (الطول: {f['len']:,.1f} متر)**")
+                st.markdown(f"**📍 الخط رقم #{fi} (الطول الحالي: {f['len']:,.1f} متر)**")
                 col1, col2, col3 = st.columns(3)
                 
                 with col1:
-                    lt = col1.selectbox("نوع الخط", list(LINE_TYPES.keys()), format_func=lambda x: LINE_TYPES[x], key=f"lt_{fi}")
+                    lt = col1.selectbox("نوع المقطع الهندسي", list(LINE_TYPES.keys()), format_func=lambda x: LINE_TYPES[x], key=f"lt_{fi}")
                 with col2:
                     dia = None
                     if lt == "pipe":
-                        dia = col2.selectbox("القطر (ملم)", list(PIPE_PRICES.keys()), index=len(PIPE_PRICES)-1, key=f"dia_{fi}")
+                        dia = col2.selectbox("القطر المقترح (ملم)", list(PIPE_PRICES.keys()), index=len(PIPE_PRICES)-1, key=f"dia_{fi}")
                 with col3:
                     gp = get_price(lt, dia, None)
-                    cp = col3.number_input("السعر المخصص (ريال/م)", min_value=0.0, value=float(gp), step=50.0, key=f"cp_{fi}")
+                    cp = col3.number_input("سعر المتر المخصص (ريال/م)", min_value=0.0, value=float(gp), step=50.0, key=f"cp_{fi}")
                 
-                # حساب تكلفة الخط الفردي
+                # الحساب الرياضي للمقطع
                 line_cost = f["len"] * cp
                 total_length += f["len"]
                 total_network_cost += line_cost
@@ -227,26 +262,27 @@ if uploaded_file is not None:
                     "label": f"#{fi}", "len": f["len"], "line_type": lt,
                     "diameter_mm": dia, "price_per_m": cp, "cost": line_cost
                 })
-                st.caption(f"💰 التكلفة المقدرة لهذا الخط: **{line_cost:,.2f} ريال**")
-                st.markdown("---")
+                st.caption(f"💰 التكلفة التقديرية لهذا المقطع الفردي: **{line_cost:,.2f} ريال**")
+                st.markdown("<br>", unsafe_allow_html=True)
             
-            # عرض النتائج الكلية
-            st.subheader("📊 ملخص التكلفة الإجمالي للشبكة")
+            # عرض بطاقات ملخص الحسابات الكلية
+            st.subheader("📊 الميزانية التقديرية لإجمالي الشبكة")
             c1, c2, c3 = st.columns(3)
-            c1.metric("إجمالي الأطوال (متر)", f"{total_length:,.2f} م")
-            c2.metric("التكلفة الإجمالية (ريال)", f"{total_network_cost:,.2f} ريال")
-            c3.metric("التكلفة بالملايين", f"{total_network_cost/1e6:.3f} مليون ريال")
+            c1.metric("إجمالي أطوال قنوات السيول", f"{total_length:,.2f} م")
+            c2.metric("التكلفة الإجمالية المقدرة", f"{total_network_cost:,.2f} ريال")
+            c3.metric("الميزانية التقريبية (بالملايين)", f"{total_network_cost/1e6:.3f} مليون ريال")
             
-            # زر طباعة التقرير PDF
-            if st.button("📄 تصدير تقرير PDF معتمد"):
+            # تصدير تقارير الـ PDF
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("📄 إصدار وتصدير تقرير PDF معتمد"):
                 try:
                     pdf_data = gen_pdf(segments_summary, total_length, total_network_cost)
-                    st.download_button(label="📥 تحميل ملف الـ PDF", data=pdf_data, file_name="flood_drainage_report.pdf", mime="application/pdf")
+                    st.download_button(label="📥 اضغط هنا لتحميل تقرير الميزانية التقديرية PDF", data=pdf_data, file_name="flood_drainage_report.pdf", mime="application/pdf")
                 except Exception as e:
-                    st.error(f"حدث خطأ أثناء إعداد PDF: {e}")
+                    st.error(f"حدث خطأ أثناء إعداد وتصدير الـ PDF: {e}")
                     
         with tab2:
-            st.subheader("📋 الجدول التفصيلي للبيانات والخصائص")
+            st.subheader("📋 الجدول التفصيلي للبيانات والخصائص الهندسية")
             rows = []
             for f in feats:
                 r = {"رقم الخط": f["i"], "الطول (م)": round(f["len"], 2), "الطول (كم)": round(f["len"]/1000, 4)}
@@ -254,4 +290,4 @@ if uploaded_file is not None:
                 rows.append(r)
             st.dataframe(pd.DataFrame(rows), use_container_width=True)
     else:
-        st.warning("⚠️ لم يتم العثور على خطوط هندسية صالحة في الملف المرفوع.")
+        st.warning("⚠️ لم يتم العثور على خطوط هندسية أو مسارات جغرافية صالحة في الملف المرفوع.")
