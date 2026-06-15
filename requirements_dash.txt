@@ -5,3 +5,4 @@ pyproj
 pyshp
 reportlab
 toml
+folium
