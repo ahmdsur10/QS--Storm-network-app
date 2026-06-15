@@ -1,18 +1,17 @@
 # ══════════════════════════════════════════════════════════════════
-#  حاسبة تكلفة شبكات تصريف السيول — Streamlit Version (المصحح)
+#  حاسبة تكلفة شبكات تصريف السيول — نسخة Streamlit المتوافقة بالكامل
 #  Eng. Ahmed Adam | 2025 - 2026
 # ══════════════════════════════════════════════════════════════════
 import streamlit as st
-import json, math, os, tempfile, zipfile, base64
+import json, math, os, tempfile, zipfile
 from io import BytesIO
 import pandas as pd
 import folium
 from streamlit_folium import st_folium
 
-# ضبط إعدادات الصفحة في ستريمليت وتفعيل الاتجاه العربي (RTL)
+# 1. ضبط إعدادات الصفحة ودعم الواجهة العربية (RTL)
 st.set_page_config(page_title="حاسبة شبكات السيول", layout="wide", initial_sidebar_state="collapsed")
 
-# تطبيق التنسيقات المخصصة CSS لمحاكاة المظهر الأصلي للتطبيق
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap');
@@ -31,7 +30,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# ══ الأسعار وثوابت الشبكة ══
+# ══ الأسعار وثوابت الشبكة الأصلية ══
 PIPE_PRICES = {
     400:2713, 500:2935, 600:3145, 700:3431, 800:4009,
     900:4299, 1000:4625, 1100:5010, 1200:5335, 1300:5725, 1400:6055,
@@ -41,7 +40,7 @@ OPEN_CHANNEL_PRICE = 13052.0
 LINE_TYPES = {"pipe":"أنبوب", "box_channel":"قناة صندوقية", "open_channel":"قناة مفتوحة"}
 RLAT, RLON = 24.7136, 46.6753
 
-# ══ دوال حسابية وجغرافية ══
+# ══ الدوال الحسابية والجغرافية الأصلية ══
 def hav(lon1, lat1, lon2, lat2):
     R = 6371000; p1, p2 = math.radians(lat1), math.radians(lat2)
     a = math.sin(math.radians(lat2-lat1)/2)**2 + math.cos(p1)*math.cos(p2)*math.sin(math.radians(lon2-lon1)/2)**2
@@ -190,23 +189,19 @@ def gen_pdf(segments_data, stot, total_cost):
     doc.build(story); return buf.getvalue()
 
 # ══════════════════════════════════════════════════════════════════
-# نظام إدارة الجلسة وبوابة تسجيل الدخول (Authentication)
+# 2. نظام تسجيل الدخول والحماية (Authentication) التابع لك
 # ══════════════════════════════════════════════════════════════════
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
 def check_login(username, password):
     try:
-        # محاولة القراءة من الـ secrets الخاصة بـ streamlit
-        if st.secrets["users"][username] == password:
-            return True
-    except:
-        pass
-    # حساب احتياطي (Fallback للتجربة المحلية السريعة)
+        if st.secrets["users"][username] == password: return True
+    except: pass
     return username == "admin" and password == "admin"
 
 if not st.session_state.authenticated:
-    st.markdown("<h2 style='text-align: center; color: #0a2a5e;'>🌊 حاسبة شبكات تصريف السيول</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='text-align: center; color: #0a2a5e; margin-top: 50px;'>🌊 حاسبة شبكات تصريف السيول</h2>", unsafe_allow_html=True)
     st.markdown("<p style='text-align: center; color: #6b7a99;'>Flood Drainage Network Calculator · Eng. Ahmed Adam</p>", unsafe_allow_html=True)
     
     with st.container():
@@ -222,7 +217,7 @@ if not st.session_state.authenticated:
     st.stop()
 
 # ══════════════════════════════════════════════════════════════════
-# الواجهة الرئيسية بعد تسجيل الدخول بنجاح
+# 3. واجهة التطبيق الرئيسية بعد تسجيل الدخول
 # ══════════════════════════════════════════════════════════════════
 col_title, col_logout = st.columns([5, 1])
 with col_title:
@@ -233,7 +228,7 @@ with col_logout:
         st.session_state.authenticated = False
         st.rerun()
 
-# نظام إدارة الرفع للملفات
+# بوابات رفع الملفات (GeoJSON أو Zip Shapefile)
 uploaded_file = st.file_uploader("📂 ارفع ملف بيانات الشبكة (GeoJSON أو Shapefile مضغوط .zip)", type=["geojson", "json", "zip"])
 
 if uploaded_file is not None:
@@ -247,14 +242,14 @@ if uploaded_file is not None:
     feats = st.session_state.get("feats", [])
     
     if feats:
-        st.success(f"✅ تم تحميل {len(feats)} خط بنجاح!")
+        st.success(f"✅ تم تحميل {len(feats)} خط جيوغرافي بنجاح!")
         
-        tab1, tab2 = st.tabs(["🗺️ الخريطة وإعدادات التكاليف", "📊 جدول بيانات المخطط"])
+        tab1, tab2 = st.tabs(["🗺️ الخريطة التفاعلية وإعدادات التكاليف", "📊 جدول بيانات المخطط"])
         
         with tab1:
-            st.subheader("🗺️ عرض جيوغرافي للشبكة المرفوعة")
+            st.subheader("🗺️ عرض شبكة الخطوط المرفوعة جغرافياً")
             
-            # حساب مركز الخريطة التلقائي بناءً على إحداثيات الملف
+            # حساب المركز الجغرافي التلقائي للخريطة بناءً على الملف المرفوع
             all_coords = [c for f in feats for c in f["coords"]]
             if all_coords:
                 center_lat = sum(c[1] for c in all_coords) / len(all_coords)
@@ -263,14 +258,13 @@ if uploaded_file is not None:
             else:
                 center_lat, center_lon, zoom_start = RLAT, RLON, 10
             
-            # إنشاء خريطة Folium التفاعلية
+            # إنشاء الخريطة باستخدام مكتبة Folium المتوافقة
             m = folium.Map(location=[center_lat, center_lon], zoom_start=zoom_start, control_scale=True)
             
-            # رسم الخطوط الجغرافية على الخريطة
+            # رسم مسارات الأنابيب والقنوات على الخريطة
             for f in feats:
                 folium_positions = [[c[1], c[0]] for c in f["coords"]]
                 tooltip_text = f"خط #{f['i']} | الطول: {f['len']:,.1f} م"
-                
                 folium.Polyline(
                     locations=folium_positions,
                     color="#1a5fa8",
@@ -279,7 +273,7 @@ if uploaded_file is not None:
                     tooltip=tooltip_text
                 ).add_to(m)
             
-            # عرض الخريطة داخل ستريمليت
+            # رندرة الخريطة بشكل متوافق داخل سيرفر ستريمليت السحابي
             st_folium(m, height=400, use_container_width=True)
             
             st.markdown("---")
@@ -289,7 +283,7 @@ if uploaded_file is not None:
             total_network_cost = 0.0
             segments_summary = []
             
-            # توليد خيارات المدخلات والتحكم التفاعلي لكل خط بشكل ديناميكي
+            # توليد الخيارات التفاعلية لكل مقطع خط مرفوع بشكل تلقائي
             for f in feats:
                 fi = f["i"]
                 st.markdown(f"**📍 الخط رقم #{fi} (الطول الحالي: {f['len']:,.1f} متر)**")
@@ -313,17 +307,18 @@ if uploaded_file is not None:
                     "label": f"#{fi}", "len": f["len"], "line_type": lt,
                     "diameter_mm": dia, "price_per_m": cp, "cost": line_cost
                 })
-                st.caption(f"💰 التكلفة التقديرية لهذا المقطع الفردي: **{line_cost:,.2f} ريال**")
+                st.caption(f"💰 التكلفة التقديرية المقدرة لهذا المقطع الفردي: **{line_cost:,.2f} ريال**")
                 st.markdown("<br>", unsafe_allow_html=True)
             
-            # عرض الميزانية الكلية
-            st.subheader("📊 الميزانية التقديرية لإجمالي الشبكة")
+            # عرض لوحة الإحصاءات والميزانية الإجمالية
+            st.subheader("📊 الميزانية التقديرية الكلية")
             c1, c2, c3 = st.columns(3)
             c1.metric("إجمالي أطوال قنوات السيول", f"{total_length:,.2f} م")
             c2.metric("التكلفة الإجمالية المقدرة", f"{total_network_cost:,.2f} ريال")
             c3.metric("الميزانية التقريبية (بالملايين)", f"{total_network_cost/1e6:.3f} مليون ريال")
             
             st.markdown("<br>", unsafe_allow_html=True)
+            # تصدير ملفات الـ PDF
             if st.button("📄 إصدار وتصدير تقرير PDF معتمد", use_container_width=True):
                 try:
                     pdf_data = gen_pdf(segments_summary, total_length, total_network_cost)
