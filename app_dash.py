@@ -189,7 +189,7 @@ def gen_pdf(segments_data, stot, total_cost):
     doc.build(story); return buf.getvalue()
 
 # ══════════════════════════════════════════════════════════════════
-# 2. بوابة تسجيل الدخول والحماية (Authentication)
+# 2. نظام تسجيل الدخول والحماية (Authentication)
 # ══════════════════════════════════════════════════════════════════
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
