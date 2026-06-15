@@ -1,8 +1,7 @@
-dash>=2.14
-dash-leaflet>=1.0
-pandas
-pyproj
-pyshp
-reportlab
-toml
-folium
+dash>=2.15.0
+dash-leaflet>=0.1.23
+pandas>=2.0.0
+pyproj>=3.5.0
+pyshp>=2.3.1
+reportlab>=4.0.0
+toml>=0.10.2
