@@ -1,0 +1,7 @@
+dash>=2.14
+dash-leaflet>=1.0
+pandas
+pyproj
+pyshp
+reportlab
+toml
