@@ -1,5 +1,5 @@
 # ══════════════════════════════════════════════════════════════════
-#  حاسبة تكلفة شبكات تصريف السيول — Streamlit + Folium Map
+#  حاسبة تكلفة شبكات تصريف السيول — Streamlit Version (المصحح)
 #  Eng. Ahmed Adam | 2025 - 2026
 # ══════════════════════════════════════════════════════════════════
 import streamlit as st
@@ -11,7 +11,25 @@ from streamlit_folium import st_folium
 
 # ضبط إعدادات الصفحة في ستريمليت وتفعيل الاتجاه العربي (RTL)
 st.set_page_config(page_title="حاسبة شبكات السيول", layout="wide", initial_sidebar_state="collapsed")
-st.markdown('<style>body{direction: rtl; text-align: right;}</style>', unsafe_allow_html=True)
+
+# تطبيق التنسيقات المخصصة CSS لمحاكاة المظهر الأصلي للتطبيق
+st.markdown("""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap');
+    html, body, [data-testid="stAppViewContainer"], .main * {
+        font-family: 'Cairo', sans-serif !important;
+        direction: rtl !important;
+        text-align: right !important;
+    }
+    .stMetric {
+        border-top: 3px solid #1a5fa8 !important;
+        background-color: #ffffff !important;
+        padding: 10px !important;
+        border-radius: 10px !important;
+        box-shadow: 0 2px 6px rgba(0,0,0,.06) !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
 # ══ الأسعار وثوابت الشبكة ══
 PIPE_PRICES = {
@@ -172,16 +190,53 @@ def gen_pdf(segments_data, stot, total_cost):
     doc.build(story); return buf.getvalue()
 
 # ══════════════════════════════════════════════════════════════════
-# واجهة المستخدم بنظام Streamlit
+# نظام إدارة الجلسة وبوابة تسجيل الدخول (Authentication)
 # ══════════════════════════════════════════════════════════════════
-st.title("🌊 حاسبة تكلفة شبكات تصريف السيول")
-st.caption("برمجة: م. أحمد آدم | تحليل الشبكات الحسابية الجغرافية وتقدير التكاليف")
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+def check_login(username, password):
+    try:
+        # محاولة القراءة من الـ secrets الخاصة بـ streamlit
+        if st.secrets["users"][username] == password:
+            return True
+    except:
+        pass
+    # حساب احتياطي (Fallback للتجربة المحلية السريعة)
+    return username == "admin" and password == "admin"
+
+if not st.session_state.authenticated:
+    st.markdown("<h2 style='text-align: center; color: #0a2a5e;'>🌊 حاسبة شبكات تصريف السيول</h2>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: #6b7a99;'>Flood Drainage Network Calculator · Eng. Ahmed Adam</p>", unsafe_allow_html=True)
+    
+    with st.container():
+        st.write("---")
+        user_input = st.text_input("اسم المستخدم")
+        pass_input = st.text_input("كلمة المرور", type="password")
+        if st.button("🔑 تسجيل الدخول", use_container_width=True):
+            if check_login(user_input, pass_input):
+                st.session_state.authenticated = True
+                st.rerun()
+            else:
+                st.error("❌ اسم المستخدم أو كلمة المرور غير صحيحة")
+    st.stop()
+
+# ══════════════════════════════════════════════════════════════════
+# الواجهة الرئيسية بعد تسجيل الدخول بنجاح
+# ══════════════════════════════════════════════════════════════════
+col_title, col_logout = st.columns([5, 1])
+with col_title:
+    st.title("🌊 حاسبة تكلفة شبكات تصريف السيول")
+    st.caption("برمجة: م. أحمد آدم | تحليل الشبكات الحسابية الجغرافية وتقدير التكاليف")
+with col_logout:
+    if st.button("خروج 🚪", use_container_width=True):
+        st.session_state.authenticated = False
+        st.rerun()
 
 # نظام إدارة الرفع للملفات
 uploaded_file = st.file_uploader("📂 ارفع ملف بيانات الشبكة (GeoJSON أو Shapefile مضغوط .zip)", type=["geojson", "json", "zip"])
 
 if uploaded_file is not None:
-    # استخدام session_state لتجنب إعادة التحميل عند أي تحديث في الحقول
     if "feats" not in st.session_state:
         ext = uploaded_file.name.lower().rsplit(".", 1)[-1]
         if ext in ("geojson", "json"):
@@ -194,13 +249,12 @@ if uploaded_file is not None:
     if feats:
         st.success(f"✅ تم تحميل {len(feats)} خط بنجاح!")
         
-        # إنشاء التبويبات
         tab1, tab2 = st.tabs(["🗺️ الخريطة وإعدادات التكاليف", "📊 جدول بيانات المخطط"])
         
         with tab1:
             st.subheader("🗺️ عرض جيوغرافي للشبكة المرفوعة")
             
-            # حساب مركز الخريطة التلقائي بناءً على إحداثيات الملف المرفوع
+            # حساب مركز الخريطة التلقائي بناءً على إحداثيات الملف
             all_coords = [c for f in feats for c in f["coords"]]
             if all_coords:
                 center_lat = sum(c[1] for c in all_coords) / len(all_coords)
@@ -212,9 +266,8 @@ if uploaded_file is not None:
             # إنشاء خريطة Folium التفاعلية
             m = folium.Map(location=[center_lat, center_lon], zoom_start=zoom_start, control_scale=True)
             
-            # إضافة الخطوط الجغرافية للشبكة على الخريطة
+            # رسم الخطوط الجغرافية على الخريطة
             for f in feats:
-                # قلب الإحداثيات لتتوافق مع Folium (Lat, Lon) بدلاً من (Lon, Lat)
                 folium_positions = [[c[1], c[0]] for c in f["coords"]]
                 tooltip_text = f"خط #{f['i']} | الطول: {f['len']:,.1f} م"
                 
@@ -226,18 +279,17 @@ if uploaded_file is not None:
                     tooltip=tooltip_text
                 ).add_to(m)
             
-            # عرض الخريطة داخل بيئة ستريمليت
+            # عرض الخريطة داخل ستريمليت
             st_folium(m, height=400, use_container_width=True)
             
             st.markdown("---")
             st.subheader("⚙️ تخصيص أسعار وأنواع خطوط الشبكة")
             
-            # مصفوفة لحفظ اختيارات المستخدم وإجمالي التكاليف
             total_length = 0.0
             total_network_cost = 0.0
             segments_summary = []
             
-            # توليد خيارات الإدخال لكل خط تحت الخريطة
+            # توليد خيارات المدخلات والتحكم التفاعلي لكل خط بشكل ديناميكي
             for f in feats:
                 fi = f["i"]
                 st.markdown(f"**📍 الخط رقم #{fi} (الطول الحالي: {f['len']:,.1f} متر)**")
@@ -253,7 +305,6 @@ if uploaded_file is not None:
                     gp = get_price(lt, dia, None)
                     cp = col3.number_input("سعر المتر المخصص (ريال/م)", min_value=0.0, value=float(gp), step=50.0, key=f"cp_{fi}")
                 
-                # الحساب الرياضي للمقطع
                 line_cost = f["len"] * cp
                 total_length += f["len"]
                 total_network_cost += line_cost
@@ -265,19 +316,18 @@ if uploaded_file is not None:
                 st.caption(f"💰 التكلفة التقديرية لهذا المقطع الفردي: **{line_cost:,.2f} ريال**")
                 st.markdown("<br>", unsafe_allow_html=True)
             
-            # عرض بطاقات ملخص الحسابات الكلية
+            # عرض الميزانية الكلية
             st.subheader("📊 الميزانية التقديرية لإجمالي الشبكة")
             c1, c2, c3 = st.columns(3)
             c1.metric("إجمالي أطوال قنوات السيول", f"{total_length:,.2f} م")
             c2.metric("التكلفة الإجمالية المقدرة", f"{total_network_cost:,.2f} ريال")
             c3.metric("الميزانية التقريبية (بالملايين)", f"{total_network_cost/1e6:.3f} مليون ريال")
             
-            # تصدير تقارير الـ PDF
             st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("📄 إصدار وتصدير تقرير PDF معتمد"):
+            if st.button("📄 إصدار وتصدير تقرير PDF معتمد", use_container_width=True):
                 try:
                     pdf_data = gen_pdf(segments_summary, total_length, total_network_cost)
-                    st.download_button(label="📥 اضغط هنا لتحميل تقرير الميزانية التقديرية PDF", data=pdf_data, file_name="flood_drainage_report.pdf", mime="application/pdf")
+                    st.download_button(label="📥 اضغط هنا لتحميل تقرير الميزانية التقديرية PDF", data=pdf_data, file_name="flood_cost_report.pdf", mime="application/pdf", use_container_width=True)
                 except Exception as e:
                     st.error(f"حدث خطأ أثناء إعداد وتصدير الـ PDF: {e}")
                     
