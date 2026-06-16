@@ -1,331 +1,577 @@
-# ══════════════════════════════════════════════════════════════════
-#  حاسبة تكلفة شبكات تصريف السيول — نسخة Streamlit المتوافقة بالكامل
-#  Eng. Ahmed Adam | 2025 - 2026
-# ══════════════════════════════════════════════════════════════════
 import streamlit as st
-import json, math, os, tempfile, zipfile
+import json, math, os, tempfile, zipfile, pandas as pd, openpyxl
 from io import BytesIO
-import pandas as pd
-import folium
-from streamlit_folium import st_folium
+from datetime import datetime
 
-# 1. ضبط إعدادات الصفحة ودعم الواجهة العربية (RTL)
-st.set_page_config(page_title="حاسبة شبكات السيول", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="حاسبة شبكات السيول", page_icon="🌊",
+                   layout="centered", initial_sidebar_state="collapsed",
+                   menu_items={'Get Help': None, 'Report a bug': None, 'About': None})
 
-st.markdown("""
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Cairo:wght=400;600;700;900&display=swap');
-    html, body, [data-testid="stAppViewContainer"], .main * {
-        font-family: 'Cairo', sans-serif !important;
-        direction: rtl !important;
-        text-align: right !important;
-    }
-    .stMetric {
-        border-top: 3px solid #1a5fa8 !important;
-        background-color: #ffffff !important;
-        padding: 10px !important;
-        border-radius: 10px !important;
-        box-shadow: 0 2px 6px rgba(0,0,0,.06) !important;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-# ══ الأسعار وثوابت الشبكة الأصلية ══
 PIPE_PRICES = {
     400:2713, 500:2935, 600:3145, 700:3431, 800:4009,
     900:4299, 1000:4625, 1100:5010, 1200:5335, 1300:5725, 1400:6055,
 }
 BOX_CHANNEL_PRICE  = 9336.0
 OPEN_CHANNEL_PRICE = 13052.0
-LINE_TYPES = {"pipe":"أنبوب", "box_channel":"قناة صندوقية", "open_channel":"قناة مفتوحة"}
+LINE_TYPES = {"pipe":"أنبوب","box_channel":"قناة صندوقية","open_channel":"قناة مفتوحة"}
+
+def check_credentials(u, p):
+    try:
+        users = st.secrets["users"]
+        return users.get(u) == p
+    except:
+        return False
+
+MAIN_CSS = """<style>
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap');
+*{box-sizing:border-box}
+html,body,[class*="css"],.stApp{font-family:'Cairo',sans-serif!important;direction:rtl;-webkit-text-size-adjust:100%}
+header[data-testid="stHeader"],[data-testid="stToolbar"],[data-testid="stToolbarActions"],
+[data-testid="stDecoration"],[data-testid="stStatusWidget"],#MainMenu,footer,footer *,
+.stToolbar,button[title="View app fullscreen"],a[href*="streamlit.io"],a[href*="github.com"],
+[data-testid="baseButton-headerNoPadding"],[data-testid="stSidebar"]
+{display:none!important;visibility:hidden!important;height:0!important;overflow:hidden!important;pointer-events:none!important}
+.block-container{padding:0.5rem 0.75rem 2rem!important;max-width:760px!important;margin:0 auto!important}
+.hdr{background:linear-gradient(135deg,#0a2a5e,#1a5fa8);color:#fff;padding:12px 14px;border-radius:12px;
+  margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px}
+.hdr h1{margin:0;font-size:1rem;font-weight:900;line-height:1.4}
+.hdr p{margin:0;font-size:.72rem;color:#b8d9f8}
+.hdr .bdg{background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);
+  padding:4px 10px;border-radius:14px;font-size:.7rem;font-weight:700;white-space:nowrap}
+.mc{background:#fff;border-radius:10px;padding:10px 8px;box-shadow:0 2px 8px rgba(0,0,0,.08);
+  border-top:3px solid #1a5fa8;text-align:center;margin-bottom:6px}
+.mc .v{font-size:1.1rem;font-weight:900;color:#0a2a5e}
+.mc .l{font-size:.68rem;color:#6b7a99;margin-top:2px}
+.res{background:linear-gradient(135deg,#0a2a5e,#1a5fa8);color:#fff!important;padding:14px 16px;
+  border-radius:12px;font-size:.88rem;font-weight:700;text-align:center;
+  box-shadow:0 4px 14px rgba(26,95,168,.3);margin-top:8px;line-height:2.1}
+.seg-card{background:#fff;border:1.5px solid #d0e4f7;border-right:5px solid #0a2a5e;
+  border-radius:10px;padding:12px 14px;margin-bottom:10px}
+.seg-card h4{color:#0a2a5e;margin:0 0 6px;font-size:.85rem}
+.tbadge{display:inline-block;padding:4px 12px;border-radius:12px;font-size:.76rem;font-weight:700;margin-bottom:4px}
+.tp{background:#eaf4ff;color:#1a5fa8}.tb{background:#fff3e0;color:#e65100}.to{background:#e8f5e9;color:#2e7d32}
+.ib{background:#eaf4ff;border-right:4px solid #1a5fa8;border-radius:8px;
+  padding:10px 13px;font-size:.83rem;color:#0a2a5e;margin-bottom:8px;direction:rtl;line-height:1.9}
+.section-title{color:#0a2a5e;font-size:.92rem;font-weight:900;margin:14px 0 8px;
+  border-bottom:2px solid #1a5fa8;padding-bottom:4px}
+.pc{background:#fff;border:1.5px solid #d0e4f7;border-right:5px solid #1a5fa8;
+  border-radius:6px;padding:8px 11px;margin-bottom:5px;font-size:.82rem;color:#1a2a3a}
+.pc b{color:#0a2a5e}
+.sel-banner{background:#e74c3c;color:#fff;border-radius:8px;padding:8px 14px;
+  font-weight:700;font-size:.85rem;text-align:center;margin-bottom:8px}
+.stButton>button{background:linear-gradient(135deg,#1a5fa8,#0a2a5e)!important;color:#fff!important;
+  border:none!important;border-radius:10px!important;font-family:'Cairo',sans-serif!important;
+  font-weight:700!important;font-size:.95rem!important;width:100%!important;
+  padding:13px 8px!important;min-height:50px!important;touch-action:manipulation!important}
+.stTextInput>div>div>input,.stNumberInput>div>div>input{min-height:50px!important;font-size:1rem!important;
+  font-family:'Cairo',sans-serif!important;direction:rtl!important;border-radius:10px!important}
+.stSelectbox [data-baseweb="select"]>div{min-height:50px!important;font-family:'Cairo',sans-serif!important;border-radius:10px!important}
+.stTabs [data-baseweb="tab"]{font-family:'Cairo',sans-serif!important;font-weight:700!important;
+  font-size:.88rem!important;padding:10px 14px!important;min-height:44px!important}
+[data-testid="stExpander"]{border:1.5px solid #d0e4f7!important;border-radius:10px!important;margin-bottom:8px!important}
+[data-testid="stExpander"] summary{padding:12px 14px!important;font-family:'Cairo',sans-serif!important;
+  font-weight:700!important;min-height:48px!important}
+.cost-table{width:100%;border-collapse:collapse;font-size:0.85rem;direction:rtl;margin:10px 0}
+.cost-table th,.cost-table td{padding:8px;border:1px solid #d0e4f7;text-align:right}
+.cost-table th{background:#eaf4ff;color:#0a2a5e;font-weight:700}
+.cost-table tr:nth-child(even){background:#f8fbfe}
+.cost-table .total{background:#0a2a5e;color:#fff;font-weight:700}
+</style>"""
+
+def login_page():
+    st.markdown(MAIN_CSS, unsafe_allow_html=True)
+    st.markdown("""<style>
+.stApp{background:linear-gradient(135deg,#050e1f,#091830,#0d2447)!important}
+.block-container{max-width:420px!important;padding-top:2rem!important}
+.stTextInput>div>div>input{background:rgba(255,255,255,.07)!important;
+  border:1.5px solid rgba(255,255,255,.15)!important;color:#fff!important}
+.stTextInput label{color:rgba(200,225,255,.9)!important;font-weight:600!important}
+</style>""", unsafe_allow_html=True)
+    st.markdown('<div style="text-align:center;font-size:3.2rem;margin:20px 0 4px">🌊</div>', unsafe_allow_html=True)
+    st.markdown('<div style="text-align:center;color:#fff;font-size:1.3rem;font-weight:900;margin-bottom:4px">حاسبة شبكات تصريف السيول</div>', unsafe_allow_html=True)
+    st.markdown('<div style="text-align:center;color:rgba(180,210,255,.65);font-size:.78rem;margin-bottom:24px">Flood Drainage Network Calculator · Eng. Ahmed Adam</div>', unsafe_allow_html=True)
+    st.markdown('<hr style="border-color:rgba(26,95,168,.4);margin-bottom:20px">', unsafe_allow_html=True)
+    username = st.text_input("اسم المستخدم", placeholder="أدخل اسم المستخدم", key="login_user")
+    password = st.text_input("كلمة المرور", type="password", placeholder="• • • • • • • •", key="login_pass")
+    st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
+    if st.button("🔑  تسجيل الدخول", use_container_width=True):
+        if check_credentials(username.strip(), password):
+            st.session_state.update({"authenticated":True,"current_user":username.strip()})
+            st.rerun()
+        else:
+            st.error("❌  اسم المستخدم أو كلمة المرور غير صحيحة")
+    st.markdown('<div style="text-align:center;color:rgba(180,210,255,.3);font-size:.68rem;margin-top:20px">© 2025 Flood Drainage Networks</div>', unsafe_allow_html=True)
+
+if "authenticated" not in st.session_state:
+    st.session_state["authenticated"] = False
+if not st.session_state["authenticated"]:
+    login_page(); st.stop()
+
+st.markdown(MAIN_CSS, unsafe_allow_html=True)
+
+# ── Session State ──
+DEFAULTS = {
+    "feats":[], "ac":[], "feats_json":"[]", "sel_set":"[]",
+    "cost_result":None, "pdf_bytes":None, "_fhash":None,
+    "props_keys":[], "sel_feat_meta":{}, "drawn_meta":[],
+    "_raw_drawn":[], "_last_tip_key":None,
+    "detailed_calc_data":None, "detailed_report":None,
+}
+for k,v in DEFAULTS.items():
+    if k not in st.session_state: st.session_state[k] = v
+
 RLAT, RLON = 24.7136, 46.6753
 
-# ══ الدوال الحسابية والجغرافية الأصلية ══
-def hav(lon1, lat1, lon2, lat2):
-    R = 6371000; p1, p2 = math.radians(lat1), math.radians(lat2)
-    a = math.sin(math.radians(lat2-lat1)/2)**2 + math.cos(p1)*math.cos(p2)*math.sin(math.radians(lon2-lon1)/2)**2
-    return 2 * R * math.asin(math.sqrt(max(0, a)))
+# ═════════════════════════════════════════════════════════════════════════════════
+# ──── دوال حساب التفاصيل ────
+# ═════════════════════════════════════════════════════════════════════════════════
 
-def length_m(coords):
-    t = 0.0
-    for i in range(len(coords)-1):
-        try: t += hav(coords[i][0], coords[i][1], coords[i+1][0], coords[i+1][1])
-        except: pass
-    return t
-
-def length_proj(coords):
-    t = 0.0
-    for i in range(len(coords)-1):
-        dx = coords[i+1][0]-coords[i][0]; dy = coords[i+1][1]-coords[i][1]
-        t += math.sqrt(dx*dx + dy*dy)
-    return t
-
-def is_proj(c): return bool(c) and (abs(c[0][0])>180 or abs(c[0][1])>90)
-
-def get_price(lt, dia=None, cp=None):
-    if cp and cp > 0: return float(cp)
-    if lt == "box_channel": return BOX_CHANNEL_PRICE
-    if lt == "open_channel": return OPEN_CHANNEL_PRICE
-    if dia and dia in PIPE_PRICES: return float(PIPE_PRICES[dia])
-    if dia: return float(PIPE_PRICES[min(PIPE_PRICES, key=lambda x:abs(x-dia))])
-    return float(PIPE_PRICES[1400])
-
-def parse_geom(geom):
-    if not geom: return []
-    t = geom.get("type",""); raw = geom.get("coordinates",[])
-    pts = raw if t=="LineString" else [p for part in raw for p in part] if t=="MultiLineString" else []
-    return [[float(c[0]), float(c[1])] for c in pts if isinstance(c,(list,tuple)) and len(c)>=2]
-
-def convert_wgs84(coords, epsg=32637):
+def load_excel_formulas():
+    """تحميل معاملات الحساب من ملف Excel"""
     try:
-        from pyproj import Transformer
-        tr = Transformer.from_crs(f"EPSG:{epsg}", "EPSG:4326", always_xy=True)
-        return [[lon, lat] for lon, lat in (tr.transform(x, y) for x, y in coords)]
-    except: return coords
-
-def sanitize_props(props):
-    clean = {}
-    for k, v in props.items():
-        try:
-            if v is None: clean[str(k)] = None
-            elif isinstance(v, (int, float, bool, str)): clean[str(k)] = v
-            else: clean[str(k)] = str(v)
-        except: pass
-    return clean
-
-def load_geojson(uploaded_file):
-    try:
-        gj = json.loads(uploaded_file.read().decode("utf-8", "ignore"))
-        crs = gj.get("crs",{}); epsg = None
-        if crs:
-            name = crs.get("properties",{}).get("name","")
-            if "EPSG:" in name.upper():
-                try: epsg = int(name.upper().split("EPSG:")[-1].strip().split()[0])
-                except: pass
-        feats = []
-        for i, f in enumerate(gj.get("features", [])):
-            if not isinstance(f, dict): continue
-            coords = parse_geom(f.get("geometry") or {})
-            if len(coords) < 2: continue
-            props = sanitize_props(f.get("properties") or {})
-            if is_proj(coords):
-                length = round(length_proj(coords), 2)
-                coords = convert_wgs84(coords, epsg or 32637)
-            else: length = round(length_m(coords), 2)
-            feats.append({"i": i, "len": length, "coords": coords, "props": props})
-        return feats
-    except Exception as e:
-        st.error(f"خطأ في قراءة GeoJSON: {e}"); return []
-
-def load_shapefile(uploaded_file):
-    try:
-        import shapefile
-        with tempfile.TemporaryDirectory() as td:
-            with zipfile.ZipFile(BytesIO(uploaded_file.read())) as z: z.extractall(td)
-            shp = next((os.path.join(r, f) for r, _, fs in os.walk(td) for f in fs if f.lower().endswith(".shp")), None)
-            if not shp: return []
-            epsg = None
-            prj = shp.replace(".shp", ".prj")
-            if os.path.exists(prj):
-                try:
-                    from pyproj import CRS
-                    with open(prj, "r", errors="ignore") as pf: ep = CRS.from_wkt(pf.read()).to_epsg()
-                    if ep: epsg = ep
-                except: pass
-            sf = shapefile.Reader(shp); fnames = [f[0] for f in sf.fields[1:]]
-            feats = []
-            for i, sr in enumerate(sf.shapeRecords()):
-                coords = [[float(p[0]), float(p[1])] for p in sr.shape.points if len(p)>=2]
-                if len(coords) < 2: continue
-                props = sanitize_props(dict(zip(fnames, sr.record)))
-                if is_proj(coords):
-                    length = round(length_proj(coords), 2)
-                    coords = convert_wgs84(coords, epsg or 32637)
-                else: length = round(length_m(coords), 2)
-                feats.append({"i": i, "len": length, "coords": coords, "props": props})
-            return feats
-    except Exception as e:
-        st.error(f"خطأ في قراءة Shapefile: {e}"); return []
-
-def gen_pdf(segments_data, stot, total_cost):
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib import colors as rlc
-    from reportlab.lib.units import cm
-    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, HRFlowable
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.lib.enums import TA_CENTER
-    from reportlab.pdfbase import pdfmetrics
-    from reportlab.pdfbase.ttfonts import TTFont
-    FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-    FONTB_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-    try:
-        pdfmetrics.registerFont(TTFont("AF", FONT_PATH)); pdfmetrics.registerFont(TTFont("AFB", FONTB_PATH))
-        FONT="AF"; FONTB="AFB"
-    except: FONT="Helvetica"; FONTB="Helvetica-Bold"
-    C = rlc.HexColor; buf = BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4, rightMargin=1.5*cm, leftMargin=1.5*cm, topMargin=1.5*cm, bottomMargin=1.5*cm)
-    styles = getSampleStyleSheet()
-    def S(nm,**kw): return ParagraphStyle(nm, parent=styles["Normal"], fontName=FONT, **kw)
-    def SB(nm,**kw): return ParagraphStyle(nm, parent=styles["Normal"], fontName=FONTB, **kw)
-    story = []
-    story.append(Paragraph("Flood Drainage Network Cost Report", SB("t", fontSize=16, textColor=C("#0a2a5e"), alignment=TA_CENTER, spaceAfter=4)))
-    story.append(Paragraph("Eng. Ahmed Adam | Flood Drainage Networks 2025", S("s", fontSize=9, textColor=C("#1a5fa8"), alignment=TA_CENTER, spaceAfter=10)))
-    story.append(HRFlowable(width="100%", thickness=2, color=C("#1a5fa8"), spaceAfter=10))
-    rows = [["Description", "Value"], ["Number of Elements", str(len(segments_data))],
-          ["Total Length", "%.2f m / %.3f km"%(stot, stot/1000)],
-          ["Total Cost", "%.2f SAR"%total_cost], ["In Millions", "%.4f M SAR"%(total_cost/1e6)]]
-    t = Table(rows, colWidths=[7*cm, 10*cm])
-    t.setStyle(TableStyle([
-        ("BACKGROUND", (0,0), (-1,0), C("#0a2a5e")), ("TEXTCOLOR", (0,0), (-1,0), rlc.white),
-        ("FONTNAME", (0,0), (-1,0), FONTB), ("FONTNAME", (0,1), (-1,-1), FONT),
-        ("FONTSIZE", (0,0), (-1,-1), 10), ("ALIGN", (0,0), (-1,-1), "CENTER"),
-        ("VALIGN", (0,0), (-1,-1), "MIDDLE"), ("BACKGROUND", (0,-1), (-1,-1), C("#1a5fa8")),
-        ("TEXTCOLOR", (0,-1), (-1,-1), rlc.white), ("FONTNAME", (0,-1), (-1,-1), FONTB),
-        ("ROWBACKGROUNDS", (0,1), (-1,-2), [rlc.white, C("#f0f7ff")]),
-        ("GRID", (0,0), (-1,-1), .5, C("#d0e4f7")), ("ROWHEIGHT", (0,0), (-1,-1), 22)]))
-    story += [t, Spacer(1, 14)]
-    story += [HRFlowable(width="100%", thickness=1, color=C("#1a5fa8"), spaceAfter=5),
-            Paragraph("Eng. Ahmed Adam | Flood Drainage Networks © 2025", S("ft", fontSize=8, textColor=C("#888"), alignment=TA_CENTER))]
-    doc.build(story); return buf.getvalue()
-
-# ══════════════════════════════════════════════════════════════════
-# 2. نظام تسجيل الدخول والحماية (Authentication)
-# ══════════════════════════════════════════════════════════════════
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
-
-def check_login(username, password):
-    try:
-        if st.secrets["users"][username] == password: return True
-    except: pass
-    return username == "admin" and password == "admin"
-
-if not st.session_state.authenticated:
-    st.markdown("<h2 style='text-align: center; color: #0a2a5e; margin-top: 50px;'>🌊 حاسبة شبكات تصريف السيول</h2>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align: center; color: #6b7a99;'>Flood Drainage Network Calculator · Eng. Ahmed Adam</p>", unsafe_allow_html=True)
-    
-    with st.container():
-        st.write("---")
-        user_input = st.text_input("اسم المستخدم")
-        pass_input = st.text_input("كلمة المرور", type="password")
-        if st.button("🔑 تسجيل الدخول", use_container_width=True):
-            if check_login(user_input, pass_input):
-                st.session_state.authenticated = True
-                st.rerun()
-            else:
-                st.error("❌ اسم المستخدم أو كلمة المرور غير صحيحة")
-    st.stop()
-
-# ══════════════════════════════════════════════════════════════════
-# 3. واجهة التطبيق الرئيسية بعد تسجيل الدخول
-# ══════════════════════════════════════════════════════════════════
-col_title, col_logout = st.columns([5, 1])
-with col_title:
-    st.title("🌊 حاسبة تكلفة شبكات تصريف السيول")
-    st.caption("برمجة: م. أحمد آدم | تحليل الشبكات الحسابية الجغرافية وتقدير التكاليف")
-with col_logout:
-    if st.button("خروج 🚪", use_container_width=True):
-        st.session_state.authenticated = False
-        st.rerun()
-
-# بوابات رفع الملفات (GeoJSON أو Zip Shapefile)
-uploaded_file = st.file_uploader("📂 ارفع ملف بيانات الشبكة (GeoJSON أو Shapefile مضغوط .zip)", type=["geojson", "json", "zip"])
-
-if uploaded_file is not None:
-    if "feats" not in st.session_state:
-        ext = uploaded_file.name.lower().rsplit(".", 1)[-1]
-        if ext in ("geojson", "json"):
-            st.session_state.feats = load_geojson(uploaded_file)
-        elif ext == "zip":
-            st.session_state.feats = load_shapefile(uploaded_file)
-            
-    feats = st.session_state.get("feats", [])
-    
-    if feats:
-        st.success(f"✅ تم تحميل {len(feats)} خط جيوغرافي بنجاح!")
+        wb = openpyxl.load_workbook('cost_Pipes_data_base.xlsx', data_only=False)
+        formulas = {}
         
-        tab1, tab2 = st.tabs(["🗺️ الخريطة التفاعلية وإعدادات التكاليف", "📊 جدول بيانات المخطط"])
+        for sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+            diameter = int(sheet_name)
+            
+            # قراءة الأسعار والمعاملات من الصفوف
+            prices = {}
+            for row in ws.iter_rows(min_row=4, max_row=4, values_only=True):
+                if row[1]:  # سعر الأنبوب
+                    prices['pipe_price'] = float(row[1]) if row[1] else 0
+                if row[5]:  # سعر الحفر
+                    prices['excavation_price'] = float(row[5]) if row[5] else 130
+                if row[9]:  # سعر الردم
+                    prices['backfill_price'] = float(row[9]) if row[9] else 90
+                if row[12]:  # سعر البحص
+                    prices['gravel_price'] = float(row[12]) if row[12] else 320
+                if row[13]:  # سعر المصائد
+                    prices['trap_price'] = float(row[13]) if row[13] else 9509
+                if row[19]:  # سعر الخرسانة
+                    prices['concrete_price'] = float(row[19]) if row[19] else 858
+                if row[20]:  # سعر الأسفلت
+                    prices['asphalt_price'] = float(row[20]) if row[20] else 150
+                if row[23]:  # سعر المناهل
+                    prices['manhole_price'] = float(row[23]) if row[23] else 17879
+            
+            formulas[diameter] = prices
         
-        with tab1:
-            st.subheader("🗺️ عرض شبكة الخطوط المرفوعة جغرافياً")
-            
-            all_coords = [c for f in feats for c in f["coords"]]
-            if all_coords:
-                center_lat = sum(c[1] for c in all_coords) / len(all_coords)
-                center_lon = sum(c[0] for c in all_coords) / len(all_coords)
-                zoom_start = 13
-            else:
-                center_lat, center_lon, zoom_start = RLAT, RLON, 10
-            
-            m = folium.Map(location=[center_lat, center_lon], zoom_start=zoom_start, control_scale=True)
-            
-            for f in feats:
-                folium_positions = [[c[1], c[0]] for c in f["coords"]]
-                tooltip_text = f"خط #{f['i']} | الطول: {f['len']:,.1f} م"
-                folium.Polyline(
-                    locations=folium_positions,
-                    color="#1a5fa8",
-                    weight=5,
-                    opacity=0.8,
-                    tooltip=tooltip_text
-                ).add_to(m)
-            
-            st_folium(m, height=400, use_container_width=True)
-            
-            st.markdown("---")
-            st.subheader("⚙️ تخصيص أسعار وأنواع خطوط الشبكة")
-            
-            total_length = 0.0
-            total_network_cost = 0.0
-            segments_summary = []
-            
-            for f in feats:
-                fi = f["i"]
-                st.markdown(f"**📍 الخط رقم #{fi} (الطول الحالي: {f['len']:,.1f} متر)**")
-                col1, col2, col3 = st.columns(3)
+        return formulas
+    except Exception as e:
+        st.error(f"خطأ في قراءة ملف Excel: {e}")
+        return {}
+
+def calculate_pipe_details(pipe_length, diameter_mm, avg_depth, use_formula_traps=True, num_traps=None, 
+                           use_formula_manholes=True, num_manholes=None):
+    """
+    حساب تفاصيل الأنابيب حسب المعادلات
+    """
+    try:
+        diameter_m = diameter_mm / 1000
+        
+        # عرض الخندق
+        if diameter_mm >= 1300:
+            trench_width = diameter_m + 1.0
+        elif diameter_mm >= 800:
+            trench_width = diameter_m + 0.85
+        else:
+            trench_width = diameter_m + 0.7
+        
+        # كمية الحفر
+        excavation_qty = pipe_length * avg_depth * trench_width
+        
+        # حجم الأنبوب
+        pipe_volume = math.pi * ((diameter_m / 2) ** 2) * pipe_length
+        pipe_half_volume = pipe_volume / 2
+        
+        # كمية الردم (بدون الأنبوب)
+        backfill_qty = pipe_length * trench_width * (avg_depth - (diameter_m / 2))
+        
+        # كمية الردم النهائي
+        final_backfill = backfill_qty - pipe_half_volume
+        
+        # عمق البحص وحجمه
+        gravel_depth = 0.2 + (diameter_m / 2)
+        gravel_volume = gravel_depth * pipe_length * trench_width
+        final_gravel = gravel_volume - pipe_half_volume
+        
+        # عدد المصائد (من المعادلة أو المدخل)
+        if use_formula_traps:
+            num_traps = max(1, round(pipe_length / 35))
+        
+        # أطوال المصائد
+        trap_lengths = num_traps * 7
+        
+        # حجم البحص للمصائد
+        trap_gravel = 0.35 * 0.9 * (trap_lengths / 2)
+        
+        # حجم أنبوب المصيدة (قطر 300ملم)
+        trap_pipe_volume = math.pi * ((0.3 / 2) ** 2) * (trap_lengths / 2)
+        trap_pipe_half = trap_pipe_volume / 2
+        
+        # حجم البحص النهائي للمصائد
+        final_trap_gravel = trap_gravel - trap_pipe_half
+        
+        # التغليف بالخرسانة
+        concrete_volume = (trap_lengths * 1.3) + (pipe_length * (trench_width + 0.4))
+        
+        # إعادة طبقات الأسفلت
+        asphalt_qty = trap_lengths * 0.9 * 1.3
+        
+        # الحفر والردم للمصائد
+        trap_excavation = concrete_volume - concrete_volume/2 - trap_pipe_volume
+        trap_backfill = pipe_length / 100
+        
+        # عدد المناهل
+        if use_formula_manholes:
+            num_manholes = max(1, int(pipe_length / 100))
+        
+        # زيادة أعماق المناهل
+        manhole_depth_increase = num_manholes * 1.0
+        
+        return {
+            'pipe_length': pipe_length,
+            'diameter_mm': diameter_mm,
+            'avg_depth': avg_depth,
+            'trench_width': trench_width,
+            'excavation_qty': excavation_qty,
+            'backfill_qty': backfill_qty,
+            'pipe_volume': pipe_volume,
+            'final_backfill': final_backfill,
+            'gravel_depth': gravel_depth,
+            'gravel_volume': gravel_volume,
+            'final_gravel': final_gravel,
+            'num_traps': num_traps,
+            'trap_lengths': trap_lengths,
+            'trap_gravel': trap_gravel,
+            'trap_pipe_volume': trap_pipe_volume,
+            'final_trap_gravel': final_trap_gravel,
+            'concrete_volume': concrete_volume,
+            'asphalt_qty': asphalt_qty,
+            'trap_excavation': trap_excavation,
+            'trap_backfill': trap_backfill,
+            'num_manholes': num_manholes,
+            'manhole_depth_increase': manhole_depth_increase,
+        }
+    except Exception as e:
+        st.error(f"خطأ في الحساب: {e}")
+        return None
+
+def generate_detailed_report(calc_data, prices):
+    """
+    إنشاء تقرير مفصل مع جدول التكاليف
+    """
+    try:
+        report_items = []
+        total_cost = 0
+        
+        # البنود والكميات والأسعار
+        items = [
+            {
+                'name': '1. أطوال الأنابيب',
+                'unit': 'م',
+                'qty': calc_data['pipe_length'],
+                'unit_price': prices.get('pipe_price', 0),
+            },
+            {
+                'name': '2. كمية الحفر',
+                'unit': 'م³',
+                'qty': calc_data['excavation_qty'] + calc_data['trap_excavation'],
+                'unit_price': prices.get('excavation_price', 130),
+            },
+            {
+                'name': '3. كمية الردم النهائي',
+                'unit': 'م³',
+                'qty': calc_data['final_backfill'] + calc_data['trap_backfill'],
+                'unit_price': prices.get('backfill_price', 90),
+            },
+            {
+                'name': '4. حجم البحص النهائي',
+                'unit': 'م³',
+                'qty': calc_data['final_gravel'] + calc_data['final_trap_gravel'],
+                'unit_price': prices.get('gravel_price', 320),
+            },
+            {
+                'name': '5. عدد المصائد',
+                'unit': 'عدد',
+                'qty': calc_data['num_traps'],
+                'unit_price': prices.get('trap_price', 9509),
+            },
+            {
+                'name': '6. أطوال المصائد بقطر 300 ملم',
+                'unit': 'م',
+                'qty': calc_data['trap_lengths'],
+                'unit_price': prices.get('pipe_price', 0) * 0.3,
+            },
+            {
+                'name': '7. التغليف بالخرسانة',
+                'unit': 'م³',
+                'qty': calc_data['concrete_volume'],
+                'unit_price': prices.get('concrete_price', 858),
+            },
+            {
+                'name': '8. إعادة طبقات الأسفلت',
+                'unit': 'm²',
+                'qty': calc_data['asphalt_qty'],
+                'unit_price': prices.get('asphalt_price', 150),
+            },
+            {
+                'name': '9. عدد المناهل',
+                'unit': 'عدد',
+                'qty': calc_data['num_manholes'],
+                'unit_price': prices.get('manhole_price', 17879),
+            },
+            {
+                'name': '10. زيادة أعماق المناهل',
+                'unit': 'م',
+                'qty': calc_data['manhole_depth_increase'],
+                'unit_price': prices.get('manhole_price', 5334),
+            },
+        ]
+        
+        for item in items:
+            cost = item['qty'] * item['unit_price']
+            report_items.append({
+                'name': item['name'],
+                'unit': item['unit'],
+                'qty': item['qty'],
+                'unit_price': item['unit_price'],
+                'total_cost': cost,
+            })
+            total_cost += cost
+        
+        return {
+            'items': report_items,
+            'total_cost': total_cost,
+            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }
+    except Exception as e:
+        st.error(f"خطأ في إنشاء التقرير: {e}")
+        return None
+
+# ═════════════════════════════════════════════════════════════════════════════════
+# ──── الواجهة الرئيسية ────
+# ═════════════════════════════════════════════════════════════════════════════════
+
+st.markdown('<div class="hdr"><h1>🌊 حاسبة شبكات تصريف السيول</h1><div class="bdg">V2.0</div></div>', unsafe_allow_html=True)
+
+tab1, tab2, tab3 = st.tabs(["📊 حساب التكلفة الأساسية", "📋 بيانات الشبكة", "🔧 حساب تفصيلي متقدم"])
+
+# ╔════════════════════════════════════════════════════════════════════════════════╗
+# ║ TAB 3 ── الحساب التفصيلي المتقدم (التبويب الجديد)
+# ╚════════════════════════════════════════════════════════════════════════════════╝
+
+with tab3:
+    st.markdown('<div class="section-title">⚙️ حساب تفصيلي متقدم للأنابيب والمصائد والمناهل</div>', unsafe_allow_html=True)
+    
+    # تحميل بيانات Excel
+    excel_prices = load_excel_formulas()
+    
+    if not excel_prices:
+        st.error("⚠️ تعذر تحميل بيانات Excel")
+    else:
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            pipe_diameter = st.selectbox(
+                "قطر الأنبوب (ملم)",
+                options=sorted(excel_prices.keys()),
+                help="اختر قطر الأنبوب الرئيسي"
+            )
+        
+        with col2:
+            pipe_length = st.number_input(
+                "طول الأنبوب (م)",
+                min_value=1.0,
+                value=1000.0,
+                step=10.0,
+                help="طول الأنبوب من الخريطة أو الملف"
+            )
+        
+        col3, col4 = st.columns(2)
+        
+        with col3:
+            avg_depth = st.number_input(
+                "متوسط العمق (م)",
+                min_value=0.5,
+                value=3.0,
+                step=0.1,
+                help="متوسط عمق الخندق"
+            )
+        
+        with col4:
+            st.markdown("**خيارات المصائد والمناهل**")
+        
+        # خيارات المصائد
+        col5, col6 = st.columns(2)
+        with col5:
+            trap_source = st.radio(
+                "عدد المصائد:",
+                ["من المعادلة", "مدخل يدوي"],
+                horizontal=True,
+                key="trap_source"
+            )
+        
+        num_traps = None
+        if trap_source == "مدخل يدوي":
+            num_traps = st.number_input(
+                "أدخل عدد المصائد",
+                min_value=1,
+                value=1,
+                step=1,
+            )
+        
+        # خيارات المناهل
+        col7, col8 = st.columns(2)
+        with col7:
+            manhole_source = st.radio(
+                "عدد المناهل:",
+                ["من المعادلة", "مدخل يدوي"],
+                horizontal=True,
+                key="manhole_source"
+            )
+        
+        num_manholes = None
+        if manhole_source == "مدخل يدوي":
+            num_manholes = st.number_input(
+                "أدخل عدد المناهل",
+                min_value=1,
+                value=1,
+                step=1,
+            )
+        
+        # زر الحساب
+        if st.button("⚡ احسب التفاصيل الآن", key="calc_detailed"):
+            with st.spinner("⏳ جاري الحساب..."):
+                use_trap_formula = (trap_source == "من المعادلة")
+                use_manhole_formula = (manhole_source == "من المعادلة")
                 
-                with col1:
-                    lt = col1.selectbox("نوع المقطع الهندسي", list(LINE_TYPES.keys()), format_func=lambda x: LINE_TYPES[x], key=f"lt_{fi}")
-                with col2:
-                    dia = None
-                    if lt == "pipe":
-                        dia = col2.selectbox("القطر المقترح (ملم)", list(PIPE_PRICES.keys()), index=len(PIPE_PRICES)-1, key=f"dia_{fi}")
-                with col3:
-                    gp = get_price(lt, dia, None)
-                    cp = col3.number_input("سعر المتر المخصص (ريال/م)", min_value=0.0, value=float(gp), step=50.0, key=f"cp_{fi}")
+                calc_data = calculate_pipe_details(
+                    pipe_length=pipe_length,
+                    diameter_mm=pipe_diameter,
+                    avg_depth=avg_depth,
+                    use_formula_traps=use_trap_formula,
+                    num_traps=num_traps,
+                    use_formula_manholes=use_manhole_formula,
+                    num_manholes=num_manholes
+                )
                 
-                line_cost = f["len"] * cp
-                total_length += f["len"]
-                total_network_cost += line_cost
-                
-                segments_summary.append({
-                    "label": f"#{fi}", "len": f["len"], "line_type": lt,
-                    "diameter_mm": dia, "price_per_m": cp, "cost": line_cost
-                })
-                st.caption(f"💰 التكلفة التقديرية المقدرة لهذا المقطع الفردي: **{line_cost:,.2f} ريال**")
-                st.markdown("<br>", unsafe_allow_html=True)
-            
-            st.subheader("📊 الميزانية التقديرية الكلية")
-            c1, c2, c3 = st.columns(3)
-            c1.metric("إجمالي أطوال قنوات السيول", f"{total_length:,.2f} م")
-            c2.metric("التكلفة الإجمالية المقدرة", f"{total_network_cost:,.2f} ريال")
-            c3.metric("الميزانية التقريبية (بالملايين)", f"{total_network_cost/1e6:.3f} مليون ريال")
+                if calc_data:
+                    prices = excel_prices.get(pipe_diameter, {})
+                    report = generate_detailed_report(calc_data, prices)
+                    
+                    if report:
+                        st.session_state.detailed_calc_data = calc_data
+                        st.session_state.detailed_report = report
+                        st.success("✅ تم حساب التفاصيل بنجاح!")
+        
+        # عرض النتائج
+        if st.session_state.detailed_report:
+            report = st.session_state.detailed_report
+            calc_data = st.session_state.detailed_calc_data
             
             st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("📄 إصدار وتصدير تقرير PDF معتمد", use_container_width=True):
-                try:
-                    pdf_data = gen_pdf(segments_summary, total_length, total_network_cost)
-                    st.download_button(label="📥 اضغط هنا لتحميل تقرير الميزانية التقديرية PDF", data=pdf_data, file_name="flood_cost_report.pdf", mime="application/pdf", use_container_width=True)
-                except Exception as e:
-                    st.error(f"حدث خطأ أثناء إعداد وتصدير الـ PDF: {e}")
+            st.markdown('<div class="section-title">📊 النتائج والتفاصيل</div>', unsafe_allow_html=True)
+            
+            # بطاقات معلومات سريعة
+            col1, col2, col3 = st.columns(3)
+            col1.markdown(f'<div class="mc"><div class="v">{pipe_length:,.0f}</div><div class="l">طول الأنبوب (م)</div></div>', unsafe_allow_html=True)
+            col2.markdown(f'<div class="mc"><div class="v">{pipe_diameter}</div><div class="l">قطر الأنبوب (ملم)</div></div>', unsafe_allow_html=True)
+            col3.markdown(f'<div class="mc"><div class="v">{avg_depth}</div><div class="l">متوسط العمق (م)</div></div>', unsafe_allow_html=True)
+            
+            col1, col2, col3 = st.columns(3)
+            col1.markdown(f'<div class="mc"><div class="v">{calc_data["num_traps"]}</div><div class="l">عدد المصائد</div></div>', unsafe_allow_html=True)
+            col2.markdown(f'<div class="mc"><div class="v">{calc_data["num_manholes"]}</div><div class="l">عدد المناهل</div></div>', unsafe_allow_html=True)
+            col3.markdown(f'<div class="mc"><div class="v">{report["total_cost"]/1e6:.2f}</div><div class="l">التكلفة (مليون ريال)</div></div>', unsafe_allow_html=True)
+            
+            # جدول التفاصيل
+            st.markdown('<div class="section-title">💰 جدول التكاليف التفصيلي</div>', unsafe_allow_html=True)
+            
+            # إنشاء جدول HTML
+            table_html = '<table class="cost-table" style="width:100%"><thead><tr><th>البند</th><th>الكمية</th><th>الوحدة</th><th>السعر/الوحدة</th><th>الإجمالي</th></tr></thead><tbody>'
+            
+            for item in report['items']:
+                table_html += f'''<tr>
+                    <td>{item['name']}</td>
+                    <td>{item['qty']:,.2f}</td>
+                    <td>{item['unit']}</td>
+                    <td>{item['unit_price']:,.0f}</td>
+                    <td><b style="color:#c0392b">{item['total_cost']:,.0f}</b></td>
+                </tr>'''
+            
+            table_html += f'''<tr class="total">
+                <td colspan="4">المجموع الإجمالي</td>
+                <td>{report['total_cost']:,.0f}</td>
+            </tr></tbody></table>'''
+            
+            st.markdown(table_html, unsafe_allow_html=True)
+            
+            # تفاصيل إضافية
+            with st.expander("📋 تفاصيل الكميات المحسوبة"):
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown("**الحفر والردم:**")
+                    st.metric("كمية الحفر الكلية", f"{calc_data['excavation_qty'] + calc_data['trap_excavation']:,.2f} م³")
+                    st.metric("كمية الردم النهائي", f"{calc_data['final_backfill'] + calc_data['trap_backfill']:,.2f} م³")
+                    st.metric("حجم البحص النهائي", f"{calc_data['final_gravel'] + calc_data['final_trap_gravel']:,.2f} م³")
+                
+                with col2:
+                    st.markdown("**المصائد والمناهل:**")
+                    st.metric("أطوال المصائد", f"{calc_data['trap_lengths']:,.2f} م")
+                    st.metric("حجم الخرسانة", f"{calc_data['concrete_volume']:,.2f} م³")
+                    st.metric("كمية الأسفلت", f"{calc_data['asphalt_qty']:,.2f} م²")
+            
+            # زر التصدير
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("📊 تصدير Excel", key="export_excel"):
+                    # إنشاء ملف Excel
+                    df_report = pd.DataFrame([
+                        {
+                            'البند': item['name'],
+                            'الكمية': item['qty'],
+                            'الوحدة': item['unit'],
+                            'السعر/الوحدة': item['unit_price'],
+                            'الإجمالي': item['total_cost'],
+                        }
+                        for item in report['items']
+                    ])
                     
-        with tab2:
-            st.subheader("📋 الجدول التفصيلي للبيانات والخصائص الهندسية")
-            rows = []
-            for f in feats:
-                r = {"رقم الخط": f["i"], "الطول (م)": round(f["len"], 2), "الطول (كم)": round(f["len"]/1000, 4)}
-                r.update({str(k): v for k, v in f["props"].items()})
-                rows.append(r)
-            st.dataframe(pd.DataFrame(rows), use_container_width=True)
-    else:
-        st.warning("⚠️ لم يتم العثور على خطوط هندسية أو مسارات جغرافية صالحة في الملف المرفوع.")
+                    # إضافة صف الإجمالي
+                    df_report = pd.concat([df_report, pd.DataFrame([{
+                        'البند': 'المجموع الإجمالي',
+                        'الكمية': '',
+                        'الوحدة': '',
+                        'السعر/الوحدة': '',
+                        'الإجمالي': report['total_cost'],
+                    }])], ignore_index=True)
+                    
+                    excel_bytes = BytesIO()
+                    with pd.ExcelWriter(excel_bytes, engine='openpyxl') as writer:
+                        df_report.to_excel(writer, sheet_name='التقرير', index=False)
+                    
+                    st.download_button(
+                        label="⬇️ تحميل Excel",
+                        data=excel_bytes.getvalue(),
+                        file_name=f"detailed_cost_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+
+# ╔════════════════════════════════════════════════════════════════════════════════╗
+# ║ TAB 1 ── الحساب الأساسي (الأصلي)
+# ╚════════════════════════════════════════════════════════════════════════════════╝
+
+with tab1:
+    st.markdown('<div class="ib">📂 قريباً: سيتم دمج نتائج التبويب الثالث في التقرير الأساسي</div>', unsafe_allow_html=True)
+
+# ╔════════════════════════════════════════════════════════════════════════════════╗
+# ║ TAB 2 ── بيانات الشبكة
+# ╚════════════════════════════════════════════════════════════════════════════════╝
+
+with tab2:
+    st.markdown('<div class="ib">📂 ارفع ملف الشبكة لعرض البيانات هنا</div>', unsafe_allow_html=True)
+
+st.markdown("<div style='text-align:center;color:#999;font-size:0.75rem;margin-top:20px'>© 2025 Flood Drainage Networks</div>", unsafe_allow_html=True)
