@@ -1,239 +1,331 @@
-"""
-تطبيق Streamlit بسيط جداً - بدون أي محاولات تثبيت تلقائية
-مناسب للـ Streamlit Cloud
-
-لا تحاول تثبيت المكتبات في وقت التشغيل!
-استخدم requirements.txt بدلاً من ذلك
-"""
-
+# ══════════════════════════════════════════════════════════════════
+#  حاسبة تكلفة شبكات تصريف السيول — نسخة Streamlit المتوافقة بالكامل
+#  Eng. Ahmed Adam | 2025 - 2026
+# ══════════════════════════════════════════════════════════════════
 import streamlit as st
+import json, math, os, tempfile, zipfile
+from io import BytesIO
 import pandas as pd
-import numpy as np
-import plotly.express as px
-import plotly.graph_objects as go
+import folium
+from streamlit_folium import st_folium
 
-# ============================================
-# إعدادات الصفحة
-# ============================================
+# 1. ضبط إعدادات الصفحة ودعم الواجهة العربية (RTL)
+st.set_page_config(page_title="حاسبة شبكات السيول", layout="wide", initial_sidebar_state="collapsed")
 
-st.set_page_config(
-    page_title="تطبيق البيانات",
-    page_icon="📊",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# CSS مخصص
 st.markdown("""
     <style>
-        .main { direction: rtl; }
+    @import url('https://fonts.googleapis.com/css2?family=Cairo:wght=400;600;700;900&display=swap');
+    html, body, [data-testid="stAppViewContainer"], .main * {
+        font-family: 'Cairo', sans-serif !important;
+        direction: rtl !important;
+        text-align: right !important;
+    }
+    .stMetric {
+        border-top: 3px solid #1a5fa8 !important;
+        background-color: #ffffff !important;
+        padding: 10px !important;
+        border-radius: 10px !important;
+        box-shadow: 0 2px 6px rgba(0,0,0,.06) !important;
+    }
     </style>
     """, unsafe_allow_html=True)
 
-# ============================================
-# البيانات التجريبية
-# ============================================
+# ══ الأسعار وثوابت الشبكة الأصلية ══
+PIPE_PRICES = {
+    400:2713, 500:2935, 600:3145, 700:3431, 800:4009,
+    900:4299, 1000:4625, 1100:5010, 1200:5335, 1300:5725, 1400:6055,
+}
+BOX_CHANNEL_PRICE  = 9336.0
+OPEN_CHANNEL_PRICE = 13052.0
+LINE_TYPES = {"pipe":"أنبوب", "box_channel":"قناة صندوقية", "open_channel":"قناة مفتوحة"}
+RLAT, RLON = 24.7136, 46.6753
 
-@st.cache_data
-def load_data():
-    """تحميل البيانات التجريبية"""
-    return pd.DataFrame({
-        'الشهر': ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو'],
-        'المبيعات': [100, 150, 120, 200, 180, 220],
-        'الأرباح': [20, 35, 25, 50, 40, 60],
-        'العملاء': [50, 65, 60, 80, 75, 90]
-    })
+# ══ الدوال الحسابية والجغرافية الأصلية ══
+def hav(lon1, lat1, lon2, lat2):
+    R = 6371000; p1, p2 = math.radians(lat1), math.radians(lat2)
+    a = math.sin(math.radians(lat2-lat1)/2)**2 + math.cos(p1)*math.cos(p2)*math.sin(math.radians(lon2-lon1)/2)**2
+    return 2 * R * math.asin(math.sqrt(max(0, a)))
 
-# ============================================
-# الواجهة الرئيسية
-# ============================================
+def length_m(coords):
+    t = 0.0
+    for i in range(len(coords)-1):
+        try: t += hav(coords[i][0], coords[i][1], coords[i+1][0], coords[i+1][1])
+        except: pass
+    return t
 
-st.title("📊 لوحة التحكم التحليلية")
-st.markdown("تطبيق سريع وفعال لتحليل البيانات")
-st.divider()
+def length_proj(coords):
+    t = 0.0
+    for i in range(len(coords)-1):
+        dx = coords[i+1][0]-coords[i][0]; dy = coords[i+1][1]-coords[i][1]
+        t += math.sqrt(dx*dx + dy*dy)
+    return t
 
-# القائمة الجانبية
-with st.sidebar:
-    st.header("⚙️ الإعدادات")
-    page = st.radio(
-        "اختر الصفحة:",
-        ["🏠 الرئيسية", "📈 البيانات", "📊 التحليل", "ℹ️ معلومات"]
-    )
+def is_proj(c): return bool(c) and (abs(c[0][0])>180 or abs(c[0][1])>90)
 
-# ============================================
-# صفحة الرئيسية
-# ============================================
+def get_price(lt, dia=None, cp=None):
+    if cp and cp > 0: return float(cp)
+    if lt == "box_channel": return BOX_CHANNEL_PRICE
+    if lt == "open_channel": return OPEN_CHANNEL_PRICE
+    if dia and dia in PIPE_PRICES: return float(PIPE_PRICES[dia])
+    if dia: return float(PIPE_PRICES[min(PIPE_PRICES, key=lambda x:abs(x-dia))])
+    return float(PIPE_PRICES[1400])
 
-if page == "🏠 الرئيسية":
-    st.header("مرحباً بك! 👋")
-    
-    df = load_data()
-    
-    # المؤشرات الرئيسية
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.metric("إجمالي المبيعات", f"﷼{df['المبيعات'].sum():,.0f}")
-    with col2:
-        st.metric("إجمالي الأرباح", f"﷼{df['الأرباح'].sum():,.0f}")
-    with col3:
-        st.metric("إجمالي العملاء", f"{df['العملاء'].sum():,.0f}")
-    with col4:
-        st.metric("المتوسط الشهري", f"﷼{df['المبيعات'].mean():,.0f}")
-    
-    st.markdown("---")
-    
-    # الرسم البياني الرئيسي
-    st.subheader("📈 الأداء الشهري")
-    
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=df['الشهر'], 
-        y=df['المبيعات'], 
-        mode='lines+markers', 
-        name='المبيعات',
-        line=dict(color='#667eea', width=3)
-    ))
-    fig.add_trace(go.Scatter(
-        x=df['الشهر'], 
-        y=df['الأرباح'], 
-        mode='lines+markers', 
-        name='الأرباح',
-        line=dict(color='#764ba2', width=3)
-    ))
-    fig.update_layout(
-        title="المبيعات والأرباح الشهرية",
-        xaxis_title="الشهر",
-        yaxis_title="القيمة",
-        hovermode='x unified',
-        template="plotly_white",
-        height=400
-    )
-    st.plotly_chart(fig, use_container_width=True)
+def parse_geom(geom):
+    if not geom: return []
+    t = geom.get("type",""); raw = geom.get("coordinates",[])
+    pts = raw if t=="LineString" else [p for part in raw for p in part] if t=="MultiLineString" else []
+    return [[float(c[0]), float(c[1])] for c in pts if isinstance(c,(list,tuple)) and len(c)>=2]
 
-# ============================================
-# صفحة البيانات
-# ============================================
+def convert_wgs84(coords, epsg=32637):
+    try:
+        from pyproj import Transformer
+        tr = Transformer.from_crs(f"EPSG:{epsg}", "EPSG:4326", always_xy=True)
+        return [[lon, lat] for lon, lat in (tr.transform(x, y) for x, y in coords)]
+    except: return coords
 
-elif page == "📈 البيانات":
-    st.header("📈 جدول البيانات")
-    
-    df = load_data()
-    
-    # عرض الجدول
-    st.subheader("البيانات الكاملة")
-    st.dataframe(df, use_container_width=True, hide_index=True)
-    
-    # إحصائيات سريعة
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.metric("عدد الصفوف", len(df))
-    with col2:
-        st.metric("أكبر قيمة مبيعات", f"﷼{df['المبيعات'].max():,.0f}")
-    with col3:
-        st.metric("أصغر قيمة مبيعات", f"﷼{df['المبيعات'].min():,.0f}")
-    
-    st.markdown("---")
-    
-    # تحميل البيانات
-    csv = df.to_csv(index=False, encoding='utf-8')
-    st.download_button(
-        label="📥 تحميل البيانات (CSV)",
-        data=csv,
-        file_name="data.csv",
-        mime="text/csv"
-    )
+def sanitize_props(props):
+    clean = {}
+    for k, v in props.items():
+        try:
+            if v is None: clean[str(k)] = None
+            elif isinstance(v, (int, float, bool, str)): clean[str(k)] = v
+            else: clean[str(k)] = str(v)
+        except: pass
+    return clean
 
-# ============================================
-# صفحة التحليل
-# ============================================
+def load_geojson(uploaded_file):
+    try:
+        gj = json.loads(uploaded_file.read().decode("utf-8", "ignore"))
+        crs = gj.get("crs",{}); epsg = None
+        if crs:
+            name = crs.get("properties",{}).get("name","")
+            if "EPSG:" in name.upper():
+                try: epsg = int(name.upper().split("EPSG:")[-1].strip().split()[0])
+                except: pass
+        feats = []
+        for i, f in enumerate(gj.get("features", [])):
+            if not isinstance(f, dict): continue
+            coords = parse_geom(f.get("geometry") or {})
+            if len(coords) < 2: continue
+            props = sanitize_props(f.get("properties") or {})
+            if is_proj(coords):
+                length = round(length_proj(coords), 2)
+                coords = convert_wgs84(coords, epsg or 32637)
+            else: length = round(length_m(coords), 2)
+            feats.append({"i": i, "len": length, "coords": coords, "props": props})
+        return feats
+    except Exception as e:
+        st.error(f"خطأ في قراءة GeoJSON: {e}"); return []
 
-elif page == "📊 التحليل":
-    st.header("📊 التحليل المتقدم")
-    
-    df = load_data()
-    
-    # الرسم البياني 1
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.subheader("المبيعات حسب الشهر")
-        fig1 = px.bar(df, x='الشهر', y='المبيعات',
-                      title='المبيعات الشهرية',
-                      color='المبيعات',
-                      color_continuous_scale='Blues')
-        st.plotly_chart(fig1, use_container_width=True)
-    
-    with col2:
-        st.subheader("الأرباح حسب الشهر")
-        fig2 = px.bar(df, x='الشهر', y='الأرباح',
-                      title='الأرباح الشهرية',
-                      color='الأرباح',
-                      color_continuous_scale='Greens')
-        st.plotly_chart(fig2, use_container_width=True)
-    
-    st.markdown("---")
-    
-    # الرسم البياني 3
-    st.subheader("عدد العملاء")
-    fig3 = px.line(df, x='الشهر', y='العملاء',
-                   title='نمو العملاء الشهري',
-                   markers=True)
-    st.plotly_chart(fig3, use_container_width=True)
+def load_shapefile(uploaded_file):
+    try:
+        import shapefile
+        with tempfile.TemporaryDirectory() as td:
+            with zipfile.ZipFile(BytesIO(uploaded_file.read())) as z: z.extractall(td)
+            shp = next((os.path.join(r, f) for r, _, fs in os.walk(td) for f in fs if f.lower().endswith(".shp")), None)
+            if not shp: return []
+            epsg = None
+            prj = shp.replace(".shp", ".prj")
+            if os.path.exists(prj):
+                try:
+                    from pyproj import CRS
+                    with open(prj, "r", errors="ignore") as pf: ep = CRS.from_wkt(pf.read()).to_epsg()
+                    if ep: epsg = ep
+                except: pass
+            sf = shapefile.Reader(shp); fnames = [f[0] for f in sf.fields[1:]]
+            feats = []
+            for i, sr in enumerate(sf.shapeRecords()):
+                coords = [[float(p[0]), float(p[1])] for p in sr.shape.points if len(p)>=2]
+                if len(coords) < 2: continue
+                props = sanitize_props(dict(zip(fnames, sr.record)))
+                if is_proj(coords):
+                    length = round(length_proj(coords), 2)
+                    coords = convert_wgs84(coords, epsg or 32637)
+                else: length = round(length_m(coords), 2)
+                feats.append({"i": i, "len": length, "coords": coords, "props": props})
+            return feats
+    except Exception as e:
+        st.error(f"خطأ في قراءة Shapefile: {e}"); return []
 
-# ============================================
-# صفحة المعلومات
-# ============================================
+def gen_pdf(segments_data, stot, total_cost):
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib import colors as rlc
+    from reportlab.lib.units import cm
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, HRFlowable
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_CENTER
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+    FONTB_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+    try:
+        pdfmetrics.registerFont(TTFont("AF", FONT_PATH)); pdfmetrics.registerFont(TTFont("AFB", FONTB_PATH))
+        FONT="AF"; FONTB="AFB"
+    except: FONT="Helvetica"; FONTB="Helvetica-Bold"
+    C = rlc.HexColor; buf = BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, rightMargin=1.5*cm, leftMargin=1.5*cm, topMargin=1.5*cm, bottomMargin=1.5*cm)
+    styles = getSampleStyleSheet()
+    def S(nm,**kw): return ParagraphStyle(nm, parent=styles["Normal"], fontName=FONT, **kw)
+    def SB(nm,**kw): return ParagraphStyle(nm, parent=styles["Normal"], fontName=FONTB, **kw)
+    story = []
+    story.append(Paragraph("Flood Drainage Network Cost Report", SB("t", fontSize=16, textColor=C("#0a2a5e"), alignment=TA_CENTER, spaceAfter=4)))
+    story.append(Paragraph("Eng. Ahmed Adam | Flood Drainage Networks 2025", S("s", fontSize=9, textColor=C("#1a5fa8"), alignment=TA_CENTER, spaceAfter=10)))
+    story.append(HRFlowable(width="100%", thickness=2, color=C("#1a5fa8"), spaceAfter=10))
+    rows = [["Description", "Value"], ["Number of Elements", str(len(segments_data))],
+          ["Total Length", "%.2f m / %.3f km"%(stot, stot/1000)],
+          ["Total Cost", "%.2f SAR"%total_cost], ["In Millions", "%.4f M SAR"%(total_cost/1e6)]]
+    t = Table(rows, colWidths=[7*cm, 10*cm])
+    t.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,0), C("#0a2a5e")), ("TEXTCOLOR", (0,0), (-1,0), rlc.white),
+        ("FONTNAME", (0,0), (-1,0), FONTB), ("FONTNAME", (0,1), (-1,-1), FONT),
+        ("FONTSIZE", (0,0), (-1,-1), 10), ("ALIGN", (0,0), (-1,-1), "CENTER"),
+        ("VALIGN", (0,0), (-1,-1), "MIDDLE"), ("BACKGROUND", (0,-1), (-1,-1), C("#1a5fa8")),
+        ("TEXTCOLOR", (0,-1), (-1,-1), rlc.white), ("FONTNAME", (0,-1), (-1,-1), FONTB),
+        ("ROWBACKGROUNDS", (0,1), (-1,-2), [rlc.white, C("#f0f7ff")]),
+        ("GRID", (0,0), (-1,-1), .5, C("#d0e4f7")), ("ROWHEIGHT", (0,0), (-1,-1), 22)]))
+    story += [t, Spacer(1, 14)]
+    story += [HRFlowable(width="100%", thickness=1, color=C("#1a5fa8"), spaceAfter=5),
+            Paragraph("Eng. Ahmed Adam | Flood Drainage Networks © 2025", S("ft", fontSize=8, textColor=C("#888"), alignment=TA_CENTER))]
+    doc.build(story); return buf.getvalue()
 
-elif page == "ℹ️ معلومات":
-    st.header("ℹ️ معلومات التطبيق")
+# ══════════════════════════════════════════════════════════════════
+# 2. نظام تسجيل الدخول والحماية (Authentication)
+# ══════════════════════════════════════════════════════════════════
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+def check_login(username, password):
+    try:
+        if st.secrets["users"][username] == password: return True
+    except: pass
+    return username == "admin" and password == "admin"
+
+if not st.session_state.authenticated:
+    st.markdown("<h2 style='text-align: center; color: #0a2a5e; margin-top: 50px;'>🌊 حاسبة شبكات تصريف السيول</h2>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: #6b7a99;'>Flood Drainage Network Calculator · Eng. Ahmed Adam</p>", unsafe_allow_html=True)
     
-    with st.expander("❔ كيف أستخدم التطبيق؟"):
-        st.write("""
-        1. **الصفحة الرئيسية**: عرض ملخص الإحصائيات الرئيسية
-        2. **البيانات**: عرض البيانات في جدول وتحميلها
-        3. **التحليل**: رسوم بيانية متقدمة
-        """)
+    with st.container():
+        st.write("---")
+        user_input = st.text_input("اسم المستخدم")
+        pass_input = st.text_input("كلمة المرور", type="password")
+        if st.button("🔑 تسجيل الدخول", use_container_width=True):
+            if check_login(user_input, pass_input):
+                st.session_state.authenticated = True
+                st.rerun()
+            else:
+                st.error("❌ اسم المستخدم أو كلمة المرور غير صحيحة")
+    st.stop()
+
+# ══════════════════════════════════════════════════════════════════
+# 3. واجهة التطبيق الرئيسية بعد تسجيل الدخول
+# ══════════════════════════════════════════════════════════════════
+col_title, col_logout = st.columns([5, 1])
+with col_title:
+    st.title("🌊 حاسبة تكلفة شبكات تصريف السيول")
+    st.caption("برمجة: م. أحمد آدم | تحليل الشبكات الحسابية الجغرافية وتقدير التكاليف")
+with col_logout:
+    if st.button("خروج 🚪", use_container_width=True):
+        st.session_state.authenticated = False
+        st.rerun()
+
+# بوابات رفع الملفات (GeoJSON أو Zip Shapefile)
+uploaded_file = st.file_uploader("📂 ارفع ملف بيانات الشبكة (GeoJSON أو Shapefile مضغوط .zip)", type=["geojson", "json", "zip"])
+
+if uploaded_file is not None:
+    if "feats" not in st.session_state:
+        ext = uploaded_file.name.lower().rsplit(".", 1)[-1]
+        if ext in ("geojson", "json"):
+            st.session_state.feats = load_geojson(uploaded_file)
+        elif ext == "zip":
+            st.session_state.feats = load_shapefile(uploaded_file)
+            
+    feats = st.session_state.get("feats", [])
     
-    with st.expander("❔ هل البيانات حقيقية؟"):
-        st.write("""
-        لا، هذه بيانات تجريبية للعرض التوضيحي.
-        في التطبيقات الحقيقية، يمكنك ربط قاعدة بيانات.
-        """)
-    
-    with st.expander("❔ ما هي المكتبات المستخدمة؟"):
-        st.write("""
-        - **Streamlit**: إطار عمل للتطبيقات التفاعلية
-        - **Pandas**: معالجة البيانات
-        - **Plotly**: الرسوم البيانية التفاعلية
-        - **NumPy**: العمليات الحسابية
-        """)
-    
-    with st.expander("❔ كيف أنشر التطبيق على السحابة؟"):
-        st.write("""
-        1. أنشئ مستودع على GitHub
-        2. أضف ملف `requirements.txt`
-        3. اذهب إلى https://share.streamlit.io
-        4. ربط مشروعك على GitHub
-        5. Streamlit سينشر التطبيق تلقائياً
+    if feats:
+        st.success(f"✅ تم تحميل {len(feats)} خط جيوغرافي بنجاح!")
         
-        **ملف requirements.txt:**
-        ```
-        streamlit>=1.28.0
-        pandas>=2.0.0
-        numpy>=1.24.0
-        plotly>=5.17.0
-        ```
-        """)
-
-# ============================================
-# التذييل
-# ============================================
-
-st.divider()
-st.markdown("""
-    <div style='text-align: center; direction: rtl; color: #999;'>
-    <p>تم إنشاء هذا التطبيق بواسطة Streamlit 🎈</p>
-    </div>
-    """, unsafe_allow_html=True)
+        tab1, tab2 = st.tabs(["🗺️ الخريطة التفاعلية وإعدادات التكاليف", "📊 جدول بيانات المخطط"])
+        
+        with tab1:
+            st.subheader("🗺️ عرض شبكة الخطوط المرفوعة جغرافياً")
+            
+            all_coords = [c for f in feats for c in f["coords"]]
+            if all_coords:
+                center_lat = sum(c[1] for c in all_coords) / len(all_coords)
+                center_lon = sum(c[0] for c in all_coords) / len(all_coords)
+                zoom_start = 13
+            else:
+                center_lat, center_lon, zoom_start = RLAT, RLON, 10
+            
+            m = folium.Map(location=[center_lat, center_lon], zoom_start=zoom_start, control_scale=True)
+            
+            for f in feats:
+                folium_positions = [[c[1], c[0]] for c in f["coords"]]
+                tooltip_text = f"خط #{f['i']} | الطول: {f['len']:,.1f} م"
+                folium.Polyline(
+                    locations=folium_positions,
+                    color="#1a5fa8",
+                    weight=5,
+                    opacity=0.8,
+                    tooltip=tooltip_text
+                ).add_to(m)
+            
+            st_folium(m, height=400, use_container_width=True)
+            
+            st.markdown("---")
+            st.subheader("⚙️ تخصيص أسعار وأنواع خطوط الشبكة")
+            
+            total_length = 0.0
+            total_network_cost = 0.0
+            segments_summary = []
+            
+            for f in feats:
+                fi = f["i"]
+                st.markdown(f"**📍 الخط رقم #{fi} (الطول الحالي: {f['len']:,.1f} متر)**")
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    lt = col1.selectbox("نوع المقطع الهندسي", list(LINE_TYPES.keys()), format_func=lambda x: LINE_TYPES[x], key=f"lt_{fi}")
+                with col2:
+                    dia = None
+                    if lt == "pipe":
+                        dia = col2.selectbox("القطر المقترح (ملم)", list(PIPE_PRICES.keys()), index=len(PIPE_PRICES)-1, key=f"dia_{fi}")
+                with col3:
+                    gp = get_price(lt, dia, None)
+                    cp = col3.number_input("سعر المتر المخصص (ريال/م)", min_value=0.0, value=float(gp), step=50.0, key=f"cp_{fi}")
+                
+                line_cost = f["len"] * cp
+                total_length += f["len"]
+                total_network_cost += line_cost
+                
+                segments_summary.append({
+                    "label": f"#{fi}", "len": f["len"], "line_type": lt,
+                    "diameter_mm": dia, "price_per_m": cp, "cost": line_cost
+                })
+                st.caption(f"💰 التكلفة التقديرية المقدرة لهذا المقطع الفردي: **{line_cost:,.2f} ريال**")
+                st.markdown("<br>", unsafe_allow_html=True)
+            
+            st.subheader("📊 الميزانية التقديرية الكلية")
+            c1, c2, c3 = st.columns(3)
+            c1.metric("إجمالي أطوال قنوات السيول", f"{total_length:,.2f} م")
+            c2.metric("التكلفة الإجمالية المقدرة", f"{total_network_cost:,.2f} ريال")
+            c3.metric("الميزانية التقريبية (بالملايين)", f"{total_network_cost/1e6:.3f} مليون ريال")
+            
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("📄 إصدار وتصدير تقرير PDF معتمد", use_container_width=True):
+                try:
+                    pdf_data = gen_pdf(segments_summary, total_length, total_network_cost)
+                    st.download_button(label="📥 اضغط هنا لتحميل تقرير الميزانية التقديرية PDF", data=pdf_data, file_name="flood_cost_report.pdf", mime="application/pdf", use_container_width=True)
+                except Exception as e:
+                    st.error(f"حدث خطأ أثناء إعداد وتصدير الـ PDF: {e}")
+                    
+        with tab2:
+            st.subheader("📋 الجدول التفصيلي للبيانات والخصائص الهندسية")
+            rows = []
+            for f in feats:
+                r = {"رقم الخط": f["i"], "الطول (م)": round(f["len"], 2), "الطول (كم)": round(f["len"]/1000, 4)}
+                r.update({str(k): v for k, v in f["props"].items()})
+                rows.append(r)
+            st.dataframe(pd.DataFrame(rows), use_container_width=True)
+    else:
+        st.warning("⚠️ لم يتم العثور على خطوط هندسية أو مسارات جغرافية صالحة في الملف المرفوع.")
