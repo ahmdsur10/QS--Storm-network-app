@@ -1,3 +1,13 @@
+import sys
+import subprocess
+
+# أمر سحري لتثبيت المكتبات تلقائياً إذا لم تكن موجودة على السيرفر
+try:
+    import folium
+    from streamlit_folium import st_folium
+except ImportError:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "folium", "streamlit-folium"])
+
 import streamlit as st
 import json
 import math
@@ -123,7 +133,6 @@ RLAT, RLON = 24.7136, 46.6753
 # ═════════════════════════════════════════════════════════════════════════════════
 
 def haversine_distance(lat1, lon1, lat2, lon2):
-    """حساب المسافة بين نقطتين بالكيلومتر"""
     R = 6371
     phi1 = math.radians(lat1)
     phi2 = math.radians(lat2)
@@ -132,33 +141,27 @@ def haversine_distance(lat1, lon1, lat2, lon2):
     
     a = math.sin(delta_phi/2)**2 + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda/2)**2
     c = 2 * math.asin(math.sqrt(a))
-    return R * c * 1000  # تحويل لمتر
+    return R * c * 1000
 
 def calculate_line_length(coords):
-    """حساب طول الخط من الإحداثيات"""
     if len(coords) < 2:
         return 0
-    
     total_length = 0
     for i in range(len(coords) - 1):
         lat1, lon1 = coords[i]
         lat2, lon2 = coords[i + 1]
         total_length += haversine_distance(lat1, lon1, lat2, lon2)
-    
     return total_length
 
 def extract_coordinates_from_geojson(geojson_data):
-    """استخراج الإحداثيات من GeoJSON"""
     if not geojson_data or "geometry" not in geojson_data:
         return []
-    
     geometry = geojson_data["geometry"]
     if geometry["type"] == "LineString":
         return [(coord[1], coord[0]) for coord in geometry["coordinates"]]
     return []
 
 def load_excel_formulas():
-    """تحميل معاملات الحساب"""
     formulas = {
         400: {'pipe_price': 454, 'excavation_price': 130, 'backfill_price': 90, 'gravel_price': 320},
         500: {'pipe_price': 619, 'excavation_price': 130, 'backfill_price': 110, 'gravel_price': 320},
@@ -175,11 +178,8 @@ def load_excel_formulas():
     return formulas
 
 def calculate_pipe_details(pipe_length, diameter_mm, avg_depth, num_traps=None, num_manholes=None):
-    """حساب تفاصيل الأنابيب"""
     try:
         diameter_m = diameter_mm / 1000
-        
-        # عرض الخندق
         if diameter_mm >= 1300:
             trench_width = diameter_m + 1.0
         elif diameter_mm >= 800:
@@ -187,53 +187,36 @@ def calculate_pipe_details(pipe_length, diameter_mm, avg_depth, num_traps=None, 
         else:
             trench_width = diameter_m + 0.7
         
-        # كمية الحفر
         excavation_qty = pipe_length * avg_depth * trench_width
-        
-        # حجم الأنبوب
         pipe_volume = math.pi * ((diameter_m / 2) ** 2) * pipe_length
         pipe_half_volume = pipe_volume / 2
         
-        # كمية الردم
         backfill_qty = pipe_length * trench_width * (avg_depth - (diameter_m / 2))
         final_backfill = backfill_qty - pipe_half_volume
         
-        # البحص
         gravel_depth = 0.2 + (diameter_m / 2)
         gravel_volume = gravel_depth * pipe_length * trench_width
         final_gravel = gravel_volume - pipe_half_volume
         
-        # المصائد
         if num_traps is None:
             num_traps = max(1, round(pipe_length / 35))
-        
         trap_lengths = num_traps * 7
         
-        # المناهل
         if num_manholes is None:
             num_manholes = max(1, int(pipe_length / 100))
-        
         manhole_depth_increase = num_manholes * 1.0
         
         return {
-            'pipe_length': pipe_length,
-            'diameter_mm': diameter_mm,
-            'avg_depth': avg_depth,
-            'trench_width': trench_width,
-            'excavation_qty': excavation_qty,
-            'final_backfill': final_backfill,
-            'final_gravel': final_gravel,
-            'num_traps': num_traps,
-            'trap_lengths': trap_lengths,
-            'num_manholes': num_manholes,
-            'manhole_depth_increase': manhole_depth_increase,
+            'pipe_length': pipe_length, 'diameter_mm': diameter_mm, 'avg_depth': avg_depth,
+            'trench_width': trench_width, 'excavation_qty': excavation_qty, 'final_backfill': final_backfill,
+            'final_gravel': final_gravel, 'num_traps': num_traps, 'trap_lengths': trap_lengths,
+            'num_manholes': num_manholes, 'manhole_depth_increase': manhole_depth_increase,
         }
     except Exception as e:
         st.error(f"خطأ في الحساب: {e}")
         return None
 
 def generate_cost_report(calc_data, prices):
-    """إنشاء تقرير التكاليف"""
     try:
         items = [
             {'name': '1. أطوال الأنابيب', 'unit': 'م', 'qty': calc_data['pipe_length'], 'price': prices.get('pipe_price', 0)},
@@ -245,15 +228,12 @@ def generate_cost_report(calc_data, prices):
             {'name': '7. عدد المناهل', 'unit': 'عدد', 'qty': calc_data['num_manholes'], 'price': 20000},
             {'name': '8. زيادة أعماق المناهل', 'unit': 'م', 'qty': calc_data['manhole_depth_increase'], 'price': 5000},
         ]
-        
         report_items = []
         total_cost = 0
-        
         for item in items:
             cost = item['qty'] * item['price']
             report_items.append({**item, 'total': cost})
             total_cost += cost
-        
         return {'items': report_items, 'total': total_cost}
     except Exception as e:
         st.error(f"خطأ في التقرير: {e}")
@@ -265,42 +245,24 @@ def generate_cost_report(calc_data, prices):
 
 st.markdown('<div class="hdr"><h1>🌊 حاسبة شبكات تصريف السيول مع الخرائط التفاعلية</h1><div class="bdg">V3.0</div></div>', unsafe_allow_html=True)
 
-# إنشاء التبويبات
 tab1, tab2, tab3 = st.tabs(["📍 الخريطة والرسم", "📊 حساب التكاليف", "🔧 حساب متقدم"])
 
-# ╔════════════════════════════════════════════════════════════════════════════════╗
-# ║ TAB 1 ── الخريطة والرسم
-# ╚════════════════════════════════════════════════════════════════════════════════╝
-
+# TAB 1
 with tab1:
     st.markdown('<div class="section-title">📍 الخريطة التفاعلية - ارسم مسار الأنبوب</div>', unsafe_allow_html=True)
     st.markdown('<div class="map-info">💡 استخدم أداة الرسم لرسم مسار الأنبوب على الخريطة. سيتم حساب الطول تلقائياً.</div>', unsafe_allow_html=True)
-    
     col1, col2 = st.columns([3, 1])
-    
     with col1:
-        m = folium.Map(
-            location=[RLAT, RLON],
-            zoom_start=11,
-            tiles='OpenStreetMap',
-            height=600
-        )
-        
+        m = folium.Map(location=[RLAT, RLON], zoom_start=11, tiles='OpenStreetMap', height=600)
         draw = Draw(
             draw_options={
                 'polyline': {'shapeOptions': {'color': '#FF0000', 'weight': 3}},
-                'polygon': False,
-                'rectangle': False,
-                'circle': False,
-                'marker': False,
-                'circlemarker': False
+                'polygon': False, 'rectangle': False, 'circle': False, 'marker': False, 'circlemarker': False
             },
             position='topleft'
         )
         draw.add_to(m)
-        
         map_data = st_folium(m, width=700, height=600)
-        
         if map_data and map_data.get('all_drawings'):
             for drawing in map_data['all_drawings']:
                 if drawing['geometry']['type'] == 'LineString':
@@ -309,61 +271,36 @@ with tab1:
                         line_length = calculate_line_length(coords)
                         st.session_state['drawn_line_length'] = line_length
                         st.session_state['drawn_coords'] = coords
-    
     with col2:
         st.markdown('<div class="section-title">📏 بيانات الخط</div>', unsafe_allow_html=True)
-        
         if st.session_state['drawn_line_length'] > 0:
-            st.markdown(f'''
-            <div class="mc">
-                <div class="v">{st.session_state["drawn_line_length"]:,.0f}</div>
-                <div class="l">طول الخط (متر)</div>
-            </div>
-            ''', unsafe_allow_html=True)
-            
-            st.markdown(f'''
-            <div class="mc">
-                <div class="v">{len(st.session_state["drawn_coords"])}</div>
-                <div class="l">عدد النقاط</div>
-            </div>
-            ''', unsafe_allow_html=True)
-            
+            st.markdown(f'<div class="mc"><div class="v">{st.session_state["drawn_line_length"]:,.0f}</div><div class="l">طول الخط (متر)</div></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="mc"><div class="v">{len(st.session_state["drawn_coords"])}</div><div class="l">عدد النقاط</div></div>', unsafe_allow_html=True)
             if st.button("✅ استخدام هذا الطول", key="use_line_length"):
                 st.success(f"تم استخدام الطول: {st.session_state['drawn_line_length']:.0f} متر")
         else:
             st.info("🖊️ ارسم خطاً على الخريطة لحساب الطول")
 
-# ╔════════════════════════════════════════════════════════════════════════════════╗
-# ║ TAB 2 ── حساب التكاليف
-# ╚════════════════════════════════════════════════════════════════════════════════╝
-
+# TAB 2
 with tab2:
     st.markdown('<div class="section-title">📊 حساب التكاليف الأساسية</div>', unsafe_allow_html=True)
-    
     col1, col2, col3, col4 = st.columns(4)
-    
     with col1:
         diameter = st.selectbox("قطر الأنبوب (ملم)", options=sorted(PIPE_PRICES.keys()), key="diameter_tab2")
-    
     with col2:
         pipe_length = st.number_input("طول الأنبوب (م)", min_value=1.0, value=st.session_state.get('drawn_line_length', 1000.0), step=10.0, key="length_tab2")
-    
     with col3:
         avg_depth = st.number_input("متوسط العمق (م)", min_value=0.5, value=3.0, step=0.1, key="depth_tab2")
-    
     with col4:
-        num_traps_manual = st.number_input("عدد المصائد", min_value=1, value=int((pipe_length or 1000) / 35), step=1, key="traps_tab2")
+        num_traps_manual = st.number_input("عدد المصائد", min_value=1, value=max(1, int((pipe_length or 1000) / 35)), step=1, key="traps_tab2")
     
     if st.button("💰 احسب التكاليف", key="calc_tab2"):
         with st.spinner("جاري الحساب..."):
             excel_prices = load_excel_formulas()
             prices = excel_prices.get(diameter, {})
-            
             calc_data = calculate_pipe_details(pipe_length, diameter, avg_depth, num_traps_manual)
-            
             if calc_data:
                 report = generate_cost_report(calc_data, prices)
-                
                 if report:
                     st.session_state.cost_result = report
                     st.session_state.detailed_calc = calc_data
@@ -371,19 +308,15 @@ with tab2:
     
     if st.session_state.cost_result:
         st.markdown('<div class="section-title">💰 جدول التكاليف</div>', unsafe_allow_html=True)
-        
         col1, col2, col3 = st.columns(3)
         col1.markdown(f'<div class="mc"><div class="v">{pipe_length:,.0f}</div><div class="l">طول الأنبوب (م)</div></div>', unsafe_allow_html=True)
         col2.markdown(f'<div class="mc"><div class="v">{diameter}</div><div class="l">قطر الأنبوب (ملم)</div></div>', unsafe_allow_html=True)
         col3.markdown(f'<div class="mc"><div class="v">{st.session_state.cost_result["total"]/1e6:.2f}M</div><div class="l">التكلفة الإجمالية</div></div>', unsafe_allow_html=True)
         
         table_html = '<table class="cost-table"><thead><tr><th>البند</th><th>الكمية</th><th>السعر</th><th>الإجمالي</th></tr></thead><tbody>'
-        
         for item in st.session_state.cost_result['items']:
             table_html += f'<tr><td>{item["name"]}</td><td>{item["qty"]:,.2f}</td><td>{item["price"]:,.0f}</td><td>{item["total"]:,.0f}</td></tr>'
-        
         table_html += f'<tr class="total"><td colspan="3">المجموع</td><td>{st.session_state.cost_result["total"]:,.0f}</td></tr></tbody></table>'
-        
         st.markdown(table_html, unsafe_allow_html=True)
         
         if st.button("📥 تصدير CSV", key="export_csv_tab2"):
@@ -391,62 +324,37 @@ with tab2:
             for item in st.session_state.cost_result['items']:
                 csv_content += f'"{item["name"]}",{item["qty"]:.2f},{item["price"]:.0f},{item["total"]:.0f}\n'
             csv_content += f"المجموع,,,{st.session_state.cost_result['total']:.0f}\n"
-            
             st.download_button(
-                label="⬇️ تحميل CSV",
-                data=csv_content,
-                file_name=f"cost_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv"
+                label="⬇️ تحميل CSV", data=csv_content,
+                file_name=f"cost_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv", mime="text/csv"
             )
 
-# ╔════════════════════════════════════════════════════════════════════════════════╗
-# ║ TAB 3 ── الحساب المتقدم
-# ╚════════════════════════════════════════════════════════════════════════════════╝
-
+# TAB 3
 with tab3:
     st.markdown('<div class="section-title">🔧 حساب متقدم مع خيارات مرنة</div>', unsafe_allow_html=True)
-    st.markdown('<div class="map-info">💡 هذا التبويب يستخدم الطول المرسوم على الخريطة من التبويب الأول تلقائياً</div>', unsafe_allow_html=True)
-    
     col1, col2, col3 = st.columns(3)
-    
     with col1:
         diameter_adv = st.selectbox("قطر الأنبوب (ملم)", options=sorted(PIPE_PRICES.keys()), key="diameter_tab3")
-    
     with col2:
-        pipe_length_adv = st.number_input("طول الأنبوب (م)", min_value=1.0, 
-                                         value=st.session_state.get('drawn_line_length', 1000.0), 
-                                         step=10.0, key="length_tab3")
-    
+        pipe_length_adv = st.number_input("طول الأنبوب (م)", min_value=1.0, value=st.session_state.get('drawn_line_length', 1000.0), step=10.0, key="length_tab3")
     with col3:
         avg_depth_adv = st.number_input("متوسط العمق (م)", min_value=0.5, value=3.0, step=0.1, key="depth_tab3")
     
     col4, col5 = st.columns(2)
-    
     with col4:
         trap_mode = st.radio("المصائد:", ["من المعادلة", "مدخل يدوي"], horizontal=True, key="trap_mode")
-        if trap_mode == "مدخل يدوي":
-            num_traps_adv = st.number_input("عدد المصائد", min_value=1, value=1, step=1, key="traps_adv")
-        else:
-            num_traps_adv = None
-    
+        num_traps_adv = st.number_input("عدد المصائد", min_value=1, value=1, step=1, key="traps_adv") if trap_mode == "مدخل يدوي" else None
     with col5:
         manhole_mode = st.radio("المناهل:", ["من المعادلة", "مدخل يدوي"], horizontal=True, key="manhole_mode")
-        if manhole_mode == "مدخل يدوي":
-            num_manholes_adv = st.number_input("عدد المناهل", min_value=1, value=1, step=1, key="manholes_adv")
-        else:
-            num_manholes_adv = None
+        num_manholes_adv = st.number_input("عدد المناهل", min_value=1, value=1, step=1, key="manholes_adv") if manhole_mode == "مدخل يدوي" else None
     
     if st.button("⚡ احسب التفاصيل الآن", key="calc_adv"):
         with st.spinner("جاري الحساب المتقدم..."):
             excel_prices = load_excel_formulas()
             prices = excel_prices.get(diameter_adv, {})
-            
-            calc_data = calculate_pipe_details(pipe_length_adv, diameter_adv, avg_depth_adv, 
-                                               num_traps_adv, num_manholes_adv)
-            
+            calc_data = calculate_pipe_details(pipe_length_adv, diameter_adv, avg_depth_adv, num_traps_adv, num_manholes_adv)
             if calc_data:
                 report = generate_cost_report(calc_data, prices)
-                
                 if report:
                     st.session_state.cost_result = report
                     st.session_state.detailed_calc = calc_data
@@ -455,21 +363,16 @@ with tab3:
     if st.session_state.detailed_calc:
         calc = st.session_state.detailed_calc
         report = st.session_state.cost_result
-        
         st.markdown('<div class="section-title">📊 النتائج التفصيلية</div>', unsafe_allow_html=True)
-        
         col1, col2, col3 = st.columns(3)
         col1.markdown(f'<div class="mc"><div class="v">{calc["pipe_length"]:,.0f}</div><div class="l">طول الأنبوب</div></div>', unsafe_allow_html=True)
         col2.markdown(f'<div class="mc"><div class="v">{calc["num_traps"]}</div><div class="l">المصائد</div></div>', unsafe_allow_html=True)
         col3.markdown(f'<div class="mc"><div class="v">{calc["num_manholes"]}</div><div class="l">المناهل</div></div>', unsafe_allow_html=True)
         
         table_html = '<table class="cost-table"><thead><tr><th>البند</th><th>الكمية</th><th>السعر</th><th>الإجمالي</th></tr></thead><tbody>'
-        
         for item in report['items']:
             table_html += f'<tr><td>{item["name"]}</td><td>{item["qty"]:,.2f} {item["unit"]}</td><td>{item["price"]:,.0f}</td><td>{item["total"]:,.0f}</td></tr>'
-        
         table_html += f'<tr class="total"><td colspan="3">المجموع الإجمالي</td><td>{report["total"]:,.0f}</td></tr></tbody></table>'
-        
         st.markdown(table_html, unsafe_allow_html=True)
         
         with st.expander("📋 تفاصيل الكميات المحسوبة"):
@@ -478,23 +381,9 @@ with tab3:
                 st.metric("كمية الحفر (م³)", f"{calc['excavation_qty']:,.2f}")
                 st.metric("كمية الردم (م³)", f"{calc['final_backfill']:,.2f}")
                 st.metric("حجم البحص (م³)", f"{calc['final_gravel']:,.2f}")
-            
             with col2:
                 st.metric("أطوال المصائد (م)", f"{calc['trap_lengths']:,.2f}")
                 st.metric("زيادة أعماق المناهل (م)", f"{calc['manhole_depth_increase']:,.2f}")
                 st.metric("عرض الخندق (م)", f"{calc['trench_width']:.2f}")
-        
-        if st.button("📥 تصدير CSV متقدم", key="export_csv_adv"):
-            csv_content = "البند,الكمية,الوحدة,السعر,الإجمالي\n"
-            for item in report['items']:
-                csv_content += f'"{item["name"]}",{item["qty"]:.2f},{item["unit"]},{item["price"]:.0f},{item["total"]:.0f}\n'
-            csv_content += f"المجموع,,,{report['total']:.0f}\n"
-            
-            st.download_button(
-                label="⬇️ تحميل CSV",
-                data=csv_content,
-                file_name=f"advanced_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv"
-            )
 
 st.markdown("<div style='text-align:center;color:#999;font-size:0.75rem;margin-top:20px'>© 2026 Flood Drainage Networks with Interactive Maps</div>", unsafe_allow_html=True)
