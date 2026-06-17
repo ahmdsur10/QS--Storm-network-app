@@ -1,7 +1,11 @@
 import streamlit as st
-import json, math, os, tempfile, zipfile, pandas as pd, openpyxl
+import json, math, os, tempfile, zipfile
 from io import BytesIO
 from datetime import datetime
+try:
+    import pandas as pd
+except:
+    pd = None
 
 st.set_page_config(page_title="حاسبة شبكات السيول", page_icon="🌊",
                    layout="centered", initial_sidebar_state="collapsed",
@@ -127,41 +131,37 @@ RLAT, RLON = 24.7136, 46.6753
 # ═════════════════════════════════════════════════════════════════════════════════
 
 def load_excel_formulas():
-    """تحميل معاملات الحساب من ملف Excel"""
-    try:
-        wb = openpyxl.load_workbook('cost_Pipes_data_base.xlsx', data_only=False)
-        formulas = {}
-        
-        for sheet_name in wb.sheetnames:
-            ws = wb[sheet_name]
-            diameter = int(sheet_name)
-            
-            # قراءة الأسعار والمعاملات من الصفوف
-            prices = {}
-            for row in ws.iter_rows(min_row=4, max_row=4, values_only=True):
-                if row[1]:  # سعر الأنبوب
-                    prices['pipe_price'] = float(row[1]) if row[1] else 0
-                if row[5]:  # سعر الحفر
-                    prices['excavation_price'] = float(row[5]) if row[5] else 130
-                if row[9]:  # سعر الردم
-                    prices['backfill_price'] = float(row[9]) if row[9] else 90
-                if row[12]:  # سعر البحص
-                    prices['gravel_price'] = float(row[12]) if row[12] else 320
-                if row[13]:  # سعر المصائد
-                    prices['trap_price'] = float(row[13]) if row[13] else 9509
-                if row[19]:  # سعر الخرسانة
-                    prices['concrete_price'] = float(row[19]) if row[19] else 858
-                if row[20]:  # سعر الأسفلت
-                    prices['asphalt_price'] = float(row[20]) if row[20] else 150
-                if row[23]:  # سعر المناهل
-                    prices['manhole_price'] = float(row[23]) if row[23] else 17879
-            
-            formulas[diameter] = prices
-        
-        return formulas
-    except Exception as e:
-        st.error(f"خطأ في قراءة ملف Excel: {e}")
-        return {}
+    """تحميل معاملات الحساب (بيانات مباشرة من ملف Excel)"""
+    # البيانات المستخرجة من ملف Excel
+    formulas = {
+        400: {'pipe_price': 454, 'excavation_price': 130, 'backfill_price': 90, 'gravel_price': 320, 
+              'trap_price': 9509, 'concrete_price': 858, 'asphalt_price': 150, 'manhole_price': 17879},
+        500: {'pipe_price': 619, 'excavation_price': 130, 'backfill_price': 110, 'gravel_price': 320, 
+              'trap_price': 8505, 'concrete_price': 804, 'asphalt_price': 150, 'manhole_price': 15992},
+        600: {'pipe_price': 725, 'excavation_price': 130, 'backfill_price': 110, 'gravel_price': 320, 
+              'trap_price': 8505, 'concrete_price': 804, 'asphalt_price': 150, 'manhole_price': 15992},
+        700: {'pipe_price': 906, 'excavation_price': 130, 'backfill_price': 110, 'gravel_price': 320, 
+              'trap_price': 8505, 'concrete_price': 804, 'asphalt_price': 150, 'manhole_price': 15992},
+        800: {'pipe_price': 1045, 'excavation_price': 130, 'backfill_price': 110, 'gravel_price': 320, 
+              'trap_price': 8505, 'concrete_price': 804, 'asphalt_price': 150, 'manhole_price': 29841},
+        900: {'pipe_price': 1225, 'excavation_price': 130, 'backfill_price': 110, 'gravel_price': 320, 
+              'trap_price': 8505, 'concrete_price': 804, 'asphalt_price': 150, 'manhole_price': 29841},
+        1000: {'pipe_price': 1440, 'excavation_price': 130, 'backfill_price': 110, 'gravel_price': 320, 
+               'trap_price': 8505, 'concrete_price': 804, 'asphalt_price': 150, 'manhole_price': 29841},
+        1100: {'pipe_price': 1600, 'excavation_price': 130, 'backfill_price': 110, 'gravel_price': 320, 
+               'trap_price': 8505, 'concrete_price': 804, 'asphalt_price': 150, 'manhole_price': 38367},
+        1200: {'pipe_price': 1812, 'excavation_price': 130, 'backfill_price': 110, 'gravel_price': 320, 
+               'trap_price': 8505, 'concrete_price': 804, 'asphalt_price': 150, 'manhole_price': 38367},
+        1300: {'pipe_price': 1920, 'excavation_price': 130, 'backfill_price': 110, 'gravel_price': 320, 
+               'trap_price': 8505, 'concrete_price': 804, 'asphalt_price': 150, 'manhole_price': 38367},
+        1400: {'pipe_price': 2132, 'excavation_price': 130, 'backfill_price': 110, 'gravel_price': 320, 
+               'trap_price': 8505, 'concrete_price': 804, 'asphalt_price': 150, 'manhole_price': 38367},
+        1500: {'pipe_price': 2132, 'excavation_price': 130, 'backfill_price': 110, 'gravel_price': 320, 
+               'trap_price': 8505, 'concrete_price': 804, 'asphalt_price': 150, 'manhole_price': 38367},
+        1600: {'pipe_price': 2132, 'excavation_price': 130, 'backfill_price': 110, 'gravel_price': 320, 
+               'trap_price': 8505, 'concrete_price': 804, 'asphalt_price': 150, 'manhole_price': 38367},
+    }
+    return formulas
 
 def calculate_pipe_details(pipe_length, diameter_mm, avg_depth, use_formula_traps=True, num_traps=None, 
                            use_formula_manholes=True, num_manholes=None):
@@ -527,37 +527,20 @@ with tab3:
             # زر التصدير
             col1, col2 = st.columns(2)
             with col1:
-                if st.button("📊 تصدير Excel", key="export_excel"):
-                    # إنشاء ملف Excel
-                    df_report = pd.DataFrame([
-                        {
-                            'البند': item['name'],
-                            'الكمية': item['qty'],
-                            'الوحدة': item['unit'],
-                            'السعر/الوحدة': item['unit_price'],
-                            'الإجمالي': item['total_cost'],
-                        }
-                        for item in report['items']
-                    ])
+                if st.button("📊 تصدير CSV", key="export_excel"):
+                    # إنشاء ملف CSV
+                    csv_content = "البند,الكمية,الوحدة,السعر/الوحدة,الإجمالي\n"
                     
-                    # إضافة صف الإجمالي
-                    df_report = pd.concat([df_report, pd.DataFrame([{
-                        'البند': 'المجموع الإجمالي',
-                        'الكمية': '',
-                        'الوحدة': '',
-                        'السعر/الوحدة': '',
-                        'الإجمالي': report['total_cost'],
-                    }])], ignore_index=True)
+                    for item in report['items']:
+                        csv_content += f'"{item["name"]}",{item["qty"]:.2f},"{item["unit"]}",{item["unit_price"]:.0f},{item["total_cost"]:.0f}\n'
                     
-                    excel_bytes = BytesIO()
-                    with pd.ExcelWriter(excel_bytes, engine='openpyxl') as writer:
-                        df_report.to_excel(writer, sheet_name='التقرير', index=False)
+                    csv_content += f"المجموع الإجمالي,,,{report['total_cost']:.0f}\n"
                     
                     st.download_button(
-                        label="⬇️ تحميل Excel",
-                        data=excel_bytes.getvalue(),
-                        file_name=f"detailed_cost_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        label="⬇️ تحميل CSV",
+                        data=csv_content,
+                        file_name=f"detailed_cost_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        mime="text/csv"
                     )
 
 # ╔════════════════════════════════════════════════════════════════════════════════╗
