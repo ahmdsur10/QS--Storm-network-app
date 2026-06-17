@@ -885,4 +885,3 @@ with tab3:
                 st.caption("⚠️ مكتبات إنشاء PDF غير مثبتة (reportlab, arabic-reshaper, python-bidi)")
 
 st.markdown("<div style='text-align:center;color:#999;font-size:0.75rem;margin-top:20px'>© 2025 Flood Drainage Networks with Interactive Maps</div>", unsafe_allow_html=True)
-PYEOF
