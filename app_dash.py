@@ -1,13 +1,3 @@
-import sys
-import subprocess
-
-# أمر سحري لتثبيت المكتبات تلقائياً إذا لم تكن موجودة على السيرفر
-try:
-    import folium
-    from streamlit_folium import st_folium
-except ImportError:
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "folium", "streamlit-folium"])
-
 import streamlit as st
 import json
 import math
@@ -323,7 +313,7 @@ with tab2:
             csv_content = "البند,الكمية,السعر,الإجمالي\n"
             for item in st.session_state.cost_result['items']:
                 csv_content += f'"{item["name"]}",{item["qty"]:.2f},{item["price"]:.0f},{item["total"]:.0f}\n'
-            csv_content += f"المجموع,,,{st.session_state.cost_result['total']:.0f}\n"
+            csv_content += f"المجموع,, Sus,,{st.session_state.cost_result['total']:.0f}\n"
             st.download_button(
                 label="⬇️ تحميل CSV", data=csv_content,
                 file_name=f"cost_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv", mime="text/csv"
