@@ -886,9 +886,3 @@ with tab3:
 
 st.markdown("<div style='text-align:center;color:#999;font-size:0.75rem;margin-top:20px'>© 2025 Flood Drainage Networks with Interactive Maps</div>", unsafe_allow_html=True)
 PYEOF
-echo "تم إنشاء الملف"
-wc -l /home/claude/storm_app/app_dash.py
-Output
-
-تم إنشاء الملف
-887 /home/claude/storm_app/app_dash.py
