@@ -9,6 +9,7 @@ from datetime import datetime
 import networkx as nx
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 
 try:
     import folium
@@ -19,30 +20,42 @@ except ModuleNotFoundError:
     FOLIUM_AVAILABLE = False
 
 try:
-    import shapefile  # pyshp
+    import shapefile
     SHAPEFILE_AVAILABLE = True
 except ModuleNotFoundError:
     SHAPEFILE_AVAILABLE = False
 
 try:
+    import geopandas as gpd
+    GEOPANDAS_AVAILABLE = True
+except ModuleNotFoundError:
+    GEOPANDAS_AVAILABLE = False
+
+try:
+    from reportlab.lib.pagesizes import A4, letter
+    from reportlab.lib.units import mm, inch
+    from reportlab.lib import colors
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.enums import TA_RIGHT, TA_CENTER, TA_LEFT
+    from reportlab.platypus import (
+        SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer, 
+        PageBreak, Image as RLImage
+    )
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.utils import ImageReader
     import arabic_reshaper
     from bidi.algorithm import get_display
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib.units import mm
-    from reportlab.lib import colors
-    from reportlab.lib.styles import ParagraphStyle
-    from reportlab.platypus import (
-        SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer, HRFlowable
-    )
-    from reportlab.pdfbase import pdfmetrics
-    from reportlab.pdfbase.ttfonts import TTFont as RLFont
     PDF_AVAILABLE = True
 except ModuleNotFoundError:
     PDF_AVAILABLE = False
 
-st.set_page_config(page_title="حاسبة شبكات السيول المتقدمة", page_icon="🌊",
-                   layout="wide", initial_sidebar_state="collapsed",
-                   menu_items={'Get Help': None, 'Report a bug': None, 'About': None})
+st.set_page_config(
+    page_title="حاسبة شبكات السيول - متقدمة", 
+    page_icon="🌊",
+    layout="wide", 
+    initial_sidebar_state="collapsed",
+    menu_items={'Get Help': None, 'Report a bug': None, 'About': None}
+)
 
 PIPE_PRICES = {
     400: 454, 500: 619, 600: 725, 700: 906, 800: 1045,
@@ -51,298 +64,172 @@ PIPE_PRICES = {
 
 LINE_COLORS = ["#FF0000", "#0a7d34", "#e8a93a", "#7a1fa8", "#1a5fa8", "#c2185b", "#00838f", "#5d4037"]
 
-FONTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
-
-# ═════════════════════════════════════════════════════════════════════════════════
-# ──── الأنماط (CSS) ── متجاوبة مع الجوال ────
-# ═════════════════════════════════════════════════════════════════════════════════
-
 MAIN_CSS = """<style>
 @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap');
 *{box-sizing:border-box}
 html,body,[class*="css"],.stApp{font-family:'Cairo',sans-serif!important;direction:rtl;-webkit-text-size-adjust:100%}
 header[data-testid="stHeader"],[data-testid="stToolbar"],[data-testid="stToolbarActions"],
-[data-testid="stDecoration"],[data-testid="stStatusWidget"],#MainMenu,footer,footer *,
-.stToolbar,button[title="View app fullscreen"],a[href*="streamlit.io"],a[href*="github.com"],
-[data-testid="baseButton-headerNoPadding"],[data-testid="stSidebar"]
+[data-testid="stDecoration"],[data-testid="stStatusWidget"],#MainMenu,footer,footer *,.stToolbar
 {display:none!important;visibility:hidden!important;height:0!important;overflow:hidden!important;pointer-events:none!important}
 
 .block-container{padding:0.5rem 0.6rem 2rem!important;max-width:1400px!important;margin:0 auto!important}
-
 .hdr{background:linear-gradient(135deg,#0a2a5e,#1a5fa8);color:#fff;padding:12px 14px;border-radius:12px;
   margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px}
 .hdr h1{margin:0;font-size:1rem;font-weight:900;line-height:1.4}
-.hdr p{margin:0;font-size:.72rem;color:#b8d9f8}
-.hdr .bdg{background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);
-  padding:4px 10px;border-radius:14px;font-size:.7rem;font-weight:700;white-space:nowrap}
-
+.section-title{color:#0a2a5e;font-size:.92rem;font-weight:900;margin:14px 0 8px;
+  border-bottom:2px solid #1a5fa8;padding-bottom:4px}
 .mc{background:#fff;border-radius:10px;padding:10px 8px;box-shadow:0 2px 8px rgba(0,0,0,.08);
   border-top:3px solid #1a5fa8;text-align:center;margin-bottom:6px}
 .mc .v{font-size:1.1rem;font-weight:900;color:#0a2a5e;word-break:break-word}
 .mc .l{font-size:.68rem;color:#6b7a99;margin-top:2px}
-
-.section-title{color:#0a2a5e;font-size:.92rem;font-weight:900;margin:14px 0 8px;
-  border-bottom:2px solid #1a5fa8;padding-bottom:4px}
-
 .stButton>button{background:linear-gradient(135deg,#1a5fa8,#0a2a5e)!important;color:#fff!important;
   border:none!important;border-radius:10px!important;font-family:'Cairo',sans-serif!important;
-  font-weight:700!important;font-size:.95rem!important;padding:13px 8px!important;min-height:48px!important;
-  width:100%!important}
-
-.stDownloadButton>button{background:linear-gradient(135deg,#188a4e,#0e5e34)!important;color:#fff!important;
-  border:none!important;border-radius:10px!important;font-family:'Cairo',sans-serif!important;
-  font-weight:700!important;font-size:.92rem!important;padding:12px 8px!important;min-height:48px!important;
-  width:100%!important}
-
-.stTextInput>div>div>input,.stNumberInput>div>div>input{min-height:46px!important;font-size:1rem!important;
-  font-family:'Cairo',sans-serif!important;direction:rtl!important;border-radius:10px!important}
-.stSelectbox [data-baseweb="select"]>div{min-height:46px!important;font-family:'Cairo',sans-serif!important;border-radius:10px!important}
-.stRadio label{font-size:.85rem!important}
-.stFileUploader label{font-size:.88rem!important;font-weight:700!important;color:#0a2a5e!important}
-.stFileUploader [data-testid="stFileUploaderDropzone"]{border-radius:10px!important}
-.stCheckbox label{font-size:.85rem!important}
-
-.stTabs [data-baseweb="tab-list"]{gap:2px!important;flex-wrap:wrap!important}
-.stTabs [data-baseweb="tab"]{font-family:'Cairo',sans-serif!important;font-weight:700!important;
-  font-size:.85rem!important;padding:9px 12px!important;min-height:42px!important;white-space:nowrap!important}
-
+  font-weight:700!important;font-size:.95rem!important;padding:13px 8px!important;min-height:48px!important;width:100%!important}
 .cost-table{width:100%;border-collapse:collapse;font-size:0.82rem;direction:rtl;margin:10px 0;
   display:block;overflow-x:auto;white-space:nowrap}
 .cost-table th,.cost-table td{padding:8px;border:1px solid #d0e4f7;text-align:right}
 .cost-table th{background:#eaf4ff;color:#0a2a5e;font-weight:700}
 .cost-table tr:nth-child(even){background:#f8fbfe}
 .cost-table .total{background:#0a2a5e;color:#fff;font-weight:700}
-
-.map-info{background:#eaf4ff;border-right:4px solid #1a5fa8;border-radius:8px;
-  padding:10px 13px;font-size:.82rem;color:#0a2a5e;margin-bottom:8px;line-height:1.8}
-.warn-box{background:#fff4e5;border-right:4px solid #e8a93a;border-radius:8px;
-  padding:10px 13px;font-size:.82rem;color:#7a5210;margin-bottom:8px;line-height:1.8}
-
-.line-card{background:#fff;border:1px solid #d0e4f7;border-radius:10px;padding:10px 12px;margin-bottom:8px;
-  border-right:5px solid var(--lc,#1a5fa8)}
-.line-card .lname{font-weight:900;color:#0a2a5e;font-size:.9rem}
-.line-card .lmeta{font-size:.74rem;color:#6b7a99;margin-top:2px}
-
-/* ── جوال: شاشات أصغر من 640px ── */
-@media (max-width: 640px){
-  .block-container{padding:0.4rem 0.4rem 1.5rem!important}
-  .hdr{padding:10px 12px;border-radius:10px}
-  .hdr h1{font-size:.85rem}
-  .hdr p{font-size:.65rem}
-  .hdr .bdg{font-size:.62rem;padding:3px 8px}
-  .section-title{font-size:.85rem;margin:10px 0 6px}
-  .mc{padding:8px 6px}
-  .mc .v{font-size:.95rem}
-  .mc .l{font-size:.62rem}
-  .stButton>button,.stDownloadButton>button{font-size:.88rem!important;padding:12px 6px!important;min-height:46px!important}
-  .stTabs [data-baseweb="tab"]{font-size:.76rem!important;padding:8px 8px!important;min-height:38px!important}
-  .cost-table{font-size:.74rem}
-  .cost-table th,.cost-table td{padding:6px 5px}
-  .map-info,.warn-box{font-size:.76rem;padding:8px 10px}
-  div[data-testid="column"]{min-width:100%!important;flex:1 1 100%!important}
-}
+.success-box{background:#d4edda;border:1px solid #c3e6cb;padding:10px;border-radius:5px;margin:10px 0;color:#155724}
+.warning-box{background:#fff3cd;border:1px solid #ffeaa7;padding:10px;border-radius:5px;margin:10px 0;color:#856404}
 </style>"""
 
 # ═════════════════════════════════════════════════════════════════════════════════
-# ──── دوال تحليل الشبكة بـ NetworkX ────
+# دوال تحليل الشبكة المتقدمة
 # ═════════════════════════════════════════════════════════════════════════════════
 
-def build_network_graph(lines):
-    """بناء رسم بياني للشبكة من الخطوط"""
+def build_network_from_lines(lines):
+    """بناء شبكة NetworkX من الخطوط مع حساب المناهل الفعلية"""
     G = nx.Graph()
+    line_details = {}
     
     for idx, line in enumerate(lines):
-        if line.get("selected", True):
-            coords = line.get("coords", [])
-            if len(coords) >= 2:
-                # إضافة الحواف بين نقاط الخط
-                for i in range(len(coords) - 1):
-                    start = tuple(coords[i])
-                    end = tuple(coords[i + 1])
-                    
-                    # إضافة العقد (المناهل)
-                    G.add_node(start, line_idx=idx, pos=start)
-                    G.add_node(end, line_idx=idx, pos=end)
-                    
-                    # إضافة الحافة (الأنبوب)
-                    distance = math.sqrt((start[0]-end[0])**2 + (start[1]-end[1])**2) * 111000  # تقريباً متر
-                    G.add_edge(start, end, weight=distance, line_idx=idx, diameter=line.get("diameter", 600))
+        if not line.get("selected", True):
+            continue
+            
+        coords = line.get("coords", [])
+        if len(coords) < 2:
+            continue
+        
+        line_nodes = []
+        line_edges = []
+        
+        # إضافة الحواف والعقد
+        for i in range(len(coords) - 1):
+            start = tuple(coords[i])
+            end = tuple(coords[i + 1])
+            
+            # إضافة العقد
+            start_node = f"node_{idx}_{i}"
+            end_node = f"node_{idx}_{i+1}"
+            
+            G.add_node(start_node, position=start, line_idx=idx, coord=start)
+            G.add_node(end_node, position=end, line_idx=idx, coord=end)
+            
+            # إضافة الحافة
+            distance = calculate_haversine_distance(coords[i], coords[i+1])
+            G.add_edge(start_node, end_node, weight=distance, line_idx=idx, distance=distance)
+            
+            line_nodes.extend([start_node, end_node])
+            line_edges.append((start_node, end_node))
+        
+        line_details[idx] = {
+            "name": line.get("name", f"الخط {idx+1}"),
+            "nodes": list(set(line_nodes)),
+            "edges": line_edges,
+            "length": line.get("length", 0),
+            "diameter": line.get("diameter", 600),
+        }
     
-    return G
+    return G, line_details
 
-def calculate_network_stats(G, lines):
+def calculate_haversine_distance(coord1, coord2):
+    """حساب المسافة بين نقطتين بـ Haversine Formula"""
+    lat1, lon1 = coord1
+    lat2, lon2 = coord2
+    R = 6_371_000  # متر
+    
+    lat1_rad = math.radians(lat1)
+    lat2_rad = math.radians(lat2)
+    delta_lat = math.radians(lat2 - lat1)
+    delta_lon = math.radians(lon2 - lon1)
+    
+    a = math.sin(delta_lat/2)**2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(delta_lon/2)**2
+    c = 2 * math.asin(math.sqrt(a))
+    
+    return R * c
+
+def count_actual_manholes(G, line_details):
+    """حساب عدد المناهل الفعلية من الشبكة"""
+    total_nodes = len(G.nodes())
+    return total_nodes
+
+def calculate_network_stats(G, line_details):
     """حساب إحصائيات الشبكة"""
     if G.number_of_nodes() == 0:
         return None
     
     stats = {
-        "num_nodes": G.number_of_nodes(),  # عدد المناهل
-        "num_edges": G.number_of_edges(),  # عدد الأنابيب
-        "num_connected_components": nx.number_connected_components(G),
-        "network_density": nx.density(G),
+        "num_nodes": G.number_of_nodes(),
+        "num_edges": G.number_of_edges(),
+        "total_length": sum(data.get('distance', 0) for _, _, data in G.edges(data=True)),
+        "num_components": nx.number_connected_components(G),
+        "is_connected": nx.is_connected(G),
+        "density": nx.density(G),
         "avg_degree": sum(dict(G.degree()).values()) / G.number_of_nodes() if G.number_of_nodes() > 0 else 0,
-        "total_length": sum(data['weight'] for _, _, data in G.edges(data=True)),
+        "line_details": line_details,
     }
-    
-    # حساب عدد المناهل لكل خط
-    lines_nodes = {}
-    for idx, line in enumerate(lines):
-        if line.get("selected", True):
-            coords = line.get("coords", [])
-            lines_nodes[idx] = len(coords)
-    
-    stats["lines_nodes"] = lines_nodes
-    
     return stats
 
-def visualize_network(G, lines):
-    """عرض الشبكة بصرياً"""
-    if G.number_of_nodes() == 0:
-        st.warning("لا توجد بيانات كافية لعرض الشبكة")
-        return
+def generate_cost_from_network(lines, network_stats):
+    """حساب التكاليف بناءً على إحصائيات الشبكة الفعلية"""
+    if not network_stats:
+        return None
     
-    fig, ax = plt.subplots(figsize=(12, 8), facecolor='white')
+    # عدد المناهل من الشبكة الفعلية
+    num_manholes = network_stats["num_nodes"]
     
-    # استخدام Spring Layout
-    pos = nx.spring_layout(G, k=0.5, iterations=50, seed=42)
-    
-    # رسم الحواف (الأنابيب)
-    nx.draw_networkx_edges(G, pos, width=2, alpha=0.6, edge_color='#1a5fa8', ax=ax)
-    
-    # رسم العقد (المناهل)
-    node_colors = []
-    for node in G.nodes():
-        # تحديد اللون بناءً على الخط
-        line_idx = G.nodes[node].get('line_idx', 0)
-        node_colors.append(LINE_COLORS[line_idx % len(LINE_COLORS)])
-    
-    nx.draw_networkx_nodes(G, pos, node_color=node_colors, node_size=300, ax=ax, edgecolors='#0a2a5e', linewidths=2)
-    
-    # إضافة التسميات
-    nx.draw_networkx_labels(G, pos, labels={node: f"M{i}" for i, node in enumerate(G.nodes())}, 
-                           font_size=8, font_weight='bold', ax=ax)
-    
-    ax.set_title("🌐 رسم الشبكة (الحمراء = عقد، الزرقاء = وصلات)", fontsize=14, fontweight='bold', pad=20)
-    ax.axis('off')
-    
-    st.pyplot(fig, use_container_width=True)
-
-def calculate_auto_manholes(length, diameter=600):
-    """حساب عدد المناهل تلقائياً بناءً على الطول والقطر"""
-    # قاعدة: منهل كل 120 متر (تقريبياً)
-    base_spacing = 120
-    
-    # تقليل المسافة للأقطار الكبيرة
-    if diameter >= 1000:
-        base_spacing = 150
-    elif diameter <= 600:
-        base_spacing = 100
-    
-    # إضافة منهل في البداية والنهاية
-    return max(2, int(length / base_spacing) + 1)
-
-def calculate_auto_traps(length):
-    """حساب عدد المصائد تلقائياً"""
-    # مصيدة كل 150 متر
-    return max(1, int(length / 150))
-
-# ═════════════════════════════════════════════════════════════════════════════════
-# ──── Initialize Session State ────
-# ═════════════════════════════════════════════════════════════════════════════════
-
-if "network_lines" not in st.session_state:
-    st.session_state["network_lines"] = []
-if "combined_result" not in st.session_state:
-    st.session_state["combined_result"] = None
-if "last_drawing_signature" not in st.session_state:
-    st.session_state["last_drawing_signature"] = None
-
-# ═════════════════════════════════════════════════════════════════════════════════
-# ──── الدوال الأساسية ────
-# ═════════════════════════════════════════════════════════════════════════════════
-
-def add_line(coords, source="رسم يدوي"):
-    """إضافة خط جديد"""
-    length = 0
-    for i in range(len(coords) - 1):
-        lat1, lon1 = coords[i]
-        lat2, lon2 = coords[i + 1]
-        # Haversine formula
-        dlat, dlon = lat2 - lat1, lon2 - lon1
-        a = math.sin(dlat/2)**2 + math.cos(lat1*math.pi/180) * math.cos(lat2*math.pi/180) * math.sin(dlon/2)**2
-        distance = 2 * 6371000 * math.asin(math.sqrt(a))
-        length += distance
-    
-    new_line = {
-        "id": str(uuid.uuid4()),
-        "name": f"خط {len(st.session_state['network_lines']) + 1}",
-        "length": length,
-        "coords": coords,
-        "source": source,
-        "selected": True,
-        "diameter": 600,
-        "depth": 1.5,
-        "traps_mode": "تلقائي",
-        "traps_value": calculate_auto_traps(length),
-        "manholes_mode": "تلقائي",
-        "manholes_value": calculate_auto_manholes(length, 600),
-    }
-    
-    st.session_state["network_lines"].append(new_line)
-    return new_line
-
-def remove_line(line_id):
-    """حذف خط"""
-    st.session_state["network_lines"] = [l for l in st.session_state["network_lines"] if l["id"] != line_id]
-    st.session_state["combined_result"] = None
-
-def calculate_cost_per_line(line):
-    """حساب تكلفة خط واحد"""
-    diameter = line.get("diameter", 600)
-    depth = line.get("depth", 1.5)
-    length = line.get("length", 0)
-    
-    price_per_meter = PIPE_PRICES.get(diameter, 725)
-    
-    if line.get("manholes_mode") == "تلقائي":
-        num_manholes = calculate_auto_manholes(length, diameter)
-    else:
-        num_manholes = line.get("manholes_value", 1)
-    
-    if line.get("traps_mode") == "تلقائي":
-        num_traps = calculate_auto_traps(length)
-    else:
-        num_traps = line.get("traps_value", 1)
-    
-    # تفاصيل البنود
-    items = [
-        {"name": "أنابيب صرف", "qty": length, "unit": "م", "price": price_per_meter, "total": length * price_per_meter},
-        {"name": "حفر (بناء الأساس)", "qty": length, "unit": "م", "price": 50, "total": length * 50},
-        {"name": "مناهل", "qty": num_manholes, "unit": "عدد", "price": 3000, "total": num_manholes * 3000},
-        {"name": "مصائد", "qty": num_traps, "unit": "عدد", "price": 2000, "total": num_traps * 2000},
-        {"name": "ردم وتسوية", "qty": length * depth, "unit": "م³", "price": 30, "total": length * depth * 30},
-    ]
-    
-    total = sum(item["total"] for item in items)
-    
-    return {
-        "items": items,
-        "total": total,
-        "num_manholes": num_manholes,
-        "num_traps": num_traps,
-    }
-
-def build_combined_result(lines):
-    """بناء نتيجة مدمجة لعدة خطوط"""
     per_line = []
     all_items = {}
-    warnings = []
     
-    for line in lines:
-        report = calculate_cost_per_line(line)
-        per_line.append({"line": line, "report": report})
+    for idx, line in enumerate(lines):
+        if not line.get("selected", True):
+            continue
         
-        for item in report["items"]:
+        diameter = line.get("diameter", 600)
+        depth = line.get("depth", 1.5)
+        length = line.get("length", 0)
+        price_per_meter = PIPE_PRICES.get(diameter, 725)
+        
+        # عدد المصائد = كل 150 متر
+        num_traps = max(1, int(length / 150))
+        
+        # عدد المناهل في هذا الخط من الشبكة
+        line_nodes = network_stats["line_details"].get(idx, {}).get("nodes", [])
+        line_manholes = len(line_nodes)
+        
+        # البنود
+        items = [
+            {"name": "أنابيب صرف", "qty": length, "unit": "م", "price": price_per_meter, "total": length * price_per_meter},
+            {"name": "حفر (بناء الأساس)", "qty": length, "unit": "م", "price": 50, "total": length * 50},
+            {"name": "مناهل", "qty": line_manholes, "unit": "عدد", "price": 3000, "total": line_manholes * 3000},
+            {"name": "مصائد", "qty": num_traps, "unit": "عدد", "price": 2000, "total": num_traps * 2000},
+            {"name": "ردم وتسوية", "qty": length * depth, "unit": "م³", "price": 30, "total": length * depth * 30},
+        ]
+        
+        total = sum(item["total"] for item in items)
+        
+        per_line.append({
+            "line": line,
+            "manholes": line_manholes,
+            "traps": num_traps,
+            "items": items,
+            "total": total,
+        })
+        
+        # جمع البنود
+        for item in items:
             key = item["name"]
             if key not in all_items:
                 all_items[key] = {"qty": 0, "total": 0, "unit": item["unit"], "price": item["price"]}
@@ -352,253 +239,619 @@ def build_combined_result(lines):
     grand_total = sum(item["total"] for item in all_items.values())
     merged_items = [{"name": name, **data} for name, data in all_items.items()]
     
+    total_traps = sum(item["traps"] for item in per_line)
+    
     return {
         "per_line": per_line,
         "merged_items": merged_items,
         "grand_total": grand_total,
-        "warnings": warnings,
-        "total_manholes": sum(item["report"]["num_manholes"] for item in per_line),
-        "total_traps": sum(item["report"]["num_traps"] for item in per_line),
+        "total_manholes": num_manholes,
+        "total_traps": total_traps,
+        "network_stats": network_stats,
     }
 
+def load_geojson_lines(geojson_data):
+    """تحميل خطوط من ملف GeoJSON"""
+    lines = []
+    try:
+        features = geojson_data.get("features", [])
+        for idx, feature in enumerate(features):
+            geom = feature.get("geometry", {})
+            if geom.get("type") == "LineString":
+                coords = [(lat, lon) for lon, lat in geom.get("coordinates", [])]
+                if len(coords) >= 2:
+                    length = sum(calculate_haversine_distance(coords[i], coords[i+1]) 
+                               for i in range(len(coords)-1))
+                    
+                    line = {
+                        "id": str(uuid.uuid4()),
+                        "name": feature.get("properties", {}).get("name", f"GeoJSON خط {idx+1}"),
+                        "length": length,
+                        "coords": coords,
+                        "source": "GeoJSON",
+                        "selected": True,
+                        "diameter": 600,
+                        "depth": 1.5,
+                        "traps_mode": "تلقائي",
+                        "traps_value": max(1, int(length / 150)),
+                        "manholes_mode": "تلقائي",
+                        "manholes_value": max(2, int(length / 120) + 1),
+                    }
+                    lines.append(line)
+    except Exception as e:
+        st.error(f"خطأ في تحميل GeoJSON: {e}")
+    
+    return lines
+
+def load_shapefile_lines(shp_file):
+    """تحميل خطوط من ملف Shapefile"""
+    lines = []
+    try:
+        if GEOPANDAS_AVAILABLE:
+            gdf = gpd.read_file(shp_file)
+            for idx, row in gdf.iterrows():
+                geom = row.geometry
+                if geom.geom_type == "LineString":
+                    coords = [(lat, lon) for lon, lat in geom.coords]
+                    if len(coords) >= 2:
+                        length = sum(calculate_haversine_distance(coords[i], coords[i+1]) 
+                                   for i in range(len(coords)-1))
+                        
+                        line = {
+                            "id": str(uuid.uuid4()),
+                            "name": row.get("name", f"Shapefile خط {idx+1}") if "name" in row else f"Shapefile خط {idx+1}",
+                            "length": length,
+                            "coords": coords,
+                            "source": "Shapefile",
+                            "selected": True,
+                            "diameter": 600,
+                            "depth": 1.5,
+                            "traps_mode": "تلقائي",
+                            "traps_value": max(1, int(length / 150)),
+                            "manholes_mode": "تلقائي",
+                            "manholes_value": max(2, int(length / 120) + 1),
+                        }
+                        lines.append(line)
+        else:
+            st.warning("⚠️ مكتبة geopandas غير متوفرة. استخدم GeoJSON بدلاً منها.")
+    except Exception as e:
+        st.error(f"خطأ في تحميل Shapefile: {e}")
+    
+    return lines
+
+def generate_pdf_report(combined_result, lines, network_stats):
+    """إنشاء تقرير PDF شامل"""
+    if not PDF_AVAILABLE:
+        return None
+    
+    try:
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=20, leftMargin=20, topMargin=20, bottomMargin=20)
+        
+        styles = getSampleStyleSheet()
+        story = []
+        
+        # العنوان
+        title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=styles['Heading1'],
+            fontName='Helvetica-Bold',
+            fontSize=20,
+            textColor=colors.HexColor('#0a2a5e'),
+            spaceAfter=12,
+            alignment=TA_CENTER,
+        )
+        
+        story.append(Paragraph("تقرير شبكة صرف السيول", title_style))
+        story.append(Paragraph(f"التاريخ: {datetime.now().strftime('%Y-%m-%d %H:%M')}", styles['Normal']))
+        story.append(Spacer(1, 12))
+        
+        # ملخص المشروع
+        story.append(Paragraph("📊 ملخص المشروع", styles['Heading2']))
+        
+        summary_data = [
+            ["المؤشر", "القيمة"],
+            ["عدد الخطوط", str(len(combined_result["per_line"]))],
+            ["الطول الإجمالي (متر)", f"{sum(pl['line'].get('length', 0) for pl in combined_result['per_line']):,.0f}"],
+            ["عدد المناهل", str(combined_result["total_manholes"])],
+            ["عدد المصائد", str(combined_result["total_traps"])],
+            ["التكلفة الإجمالية (ريال)", f"{combined_result['grand_total']:,.0f}"],
+        ]
+        
+        summary_table = Table(summary_data, colWidths=[200, 200])
+        summary_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1a5fa8')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'RIGHT'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 12),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+        ]))
+        story.append(summary_table)
+        story.append(Spacer(1, 12))
+        
+        # تفاصيل كل خط
+        story.append(PageBreak())
+        story.append(Paragraph("📋 تفاصيل الخطوط", styles['Heading2']))
+        
+        for idx, pl in enumerate(combined_result["per_line"]):
+            ln = pl["line"]
+            story.append(Paragraph(f"{ln['name']} - {ln['length']:,.0f} م", styles['Heading3']))
+            
+            line_data = [
+                ["المواصفة", "القيمة"],
+                ["القطر (ملم)", str(ln.get("diameter", 600))],
+                ["العمق (متر)", f"{ln.get('depth', 1.5):.2f}"],
+                ["عدد المناهل", str(pl.get("manholes", 0))],
+                ["عدد المصائد", str(pl.get("traps", 0))],
+            ]
+            
+            line_table = Table(line_data, colWidths=[200, 200])
+            line_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#0a7d34')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'RIGHT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ]))
+            story.append(line_table)
+            story.append(Spacer(1, 6))
+            
+            # جدول البنود
+            items_data = [["البند", "الكمية", "السعر", "الإجمالي"]]
+            for item in pl.get("items", []):
+                items_data.append([
+                    item["name"],
+                    f"{item['qty']:,.2f} {item['unit']}",
+                    f"{item['price']:,.0f}",
+                    f"{item['total']:,.0f}",
+                ])
+            
+            items_data.append(["الإجمالي", "", "", f"{pl['total']:,.0f}"])
+            
+            items_table = Table(items_data, colWidths=[150, 100, 100, 100])
+            items_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#eaf4ff')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.HexColor('#0a2a5e')),
+                ('ALIGN', (0, 0), (-1, -1), 'RIGHT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('GRID', (0, 0), (-1, -1), 1, colors.grey),
+                ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#0a2a5e')),
+                ('TEXTCOLOR', (0, -1), (-1, -1), colors.whitesmoke),
+            ]))
+            story.append(items_table)
+            story.append(Spacer(1, 12))
+        
+        # جدول الكميات المجمعة
+        story.append(PageBreak())
+        story.append(Paragraph("📦 الكميات المجمعة", styles['Heading2']))
+        
+        merged_data = [["البند", "الكمية", "الوحدة", "السعر", "الإجمالي"]]
+        for item in combined_result.get("merged_items", []):
+            avg_price = item["total"] / item["qty"] if item["qty"] > 0 else 0
+            merged_data.append([
+                item["name"],
+                f"{item['qty']:,.2f}",
+                item["unit"],
+                f"{avg_price:,.0f}",
+                f"{item['total']:,.0f}",
+            ])
+        
+        merged_table = Table(merged_data, colWidths=[150, 80, 60, 80, 80])
+        merged_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1a5fa8')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'RIGHT'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+        ]))
+        story.append(merged_table)
+        
+        # إحصائيات الشبكة
+        story.append(Spacer(1, 12))
+        story.append(Paragraph("🌐 إحصائيات الشبكة", styles['Heading2']))
+        
+        if network_stats:
+            network_data = [
+                ["المؤشر", "القيمة"],
+                ["عدد المناهل (Nodes)", str(network_stats["num_nodes"])],
+                ["عدد الأنابيب (Edges)", str(network_stats["num_edges"])],
+                ["الطول الإجمالي (كم)", f"{network_stats['total_length']/1000:.2f}"],
+                ["كثافة الشبكة", f"{network_stats['density']:.4f}"],
+                ["متصلة تماماً", "نعم" if network_stats["is_connected"] else "لا"],
+            ]
+            
+            network_table = Table(network_data, colWidths=[200, 200])
+            network_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#7a1fa8')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'RIGHT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ]))
+            story.append(network_table)
+        
+        doc.build(story)
+        buffer.seek(0)
+        return buffer.getvalue()
+    
+    except Exception as e:
+        st.error(f"خطأ في إنشاء التقرير: {e}")
+        return None
+
 # ═════════════════════════════════════════════════════════════════════════════════
-# ──── الواجهة الرئيسية ────
+# Initialize Session State
+# ═════════════════════════════════════════════════════════════════════════════════
+
+if "network_lines" not in st.session_state:
+    st.session_state["network_lines"] = []
+if "combined_result" not in st.session_state:
+    st.session_state["combined_result"] = None
+if "network_stats" not in st.session_state:
+    st.session_state["network_stats"] = None
+if "last_drawing_signature" not in st.session_state:
+    st.session_state["last_drawing_signature"] = None
+
+# ═════════════════════════════════════════════════════════════════════════════════
+# الواجهة الرئيسية
 # ═════════════════════════════════════════════════════════════════════════════════
 
 st.markdown(MAIN_CSS, unsafe_allow_html=True)
+st.markdown('<div class="hdr"><h1>🌊 حاسبة شبكات السيول - محلل الشبكة والتكاليف المتقدم</h1></div>', unsafe_allow_html=True)
 
-st.markdown('<div class="hdr"><h1>🌊 حاسبة شبكات السيول المتقدمة مع تحليل الشبكة</h1></div>', unsafe_allow_html=True)
-
-tab1, tab2, tab3 = st.tabs(["🗺️ رسم الخطوط", "💰 حساب التكاليف", "📊 تحليل الشبكة"])
+tab1, tab2, tab3, tab4 = st.tabs(["🗺️ إضافة الخطوط", "📊 تحليل الشبكة", "💰 حساب التكاليف", "📄 التقرير"])
 
 # ╔════════════════════════════════════════════════════════════════════════════════╗
-# ║ TAB 1 ── رسم الخطوط على الخريطة
+# ║ TAB 1 - إضافة الخطوط (رسم + استيراد)
 # ╚════════════════════════════════════════════════════════════════════════════════╝
 
 with tab1:
-    st.markdown('<div class="section-title">🗺️ رسم الخطوط على الخريطة</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">🗺️ إضافة الخطوط</div>', unsafe_allow_html=True)
     
-    if not FOLIUM_AVAILABLE:
-        st.error("⚠️ مكتبة folium غير متوفرة. يرجى تثبيتها: pip install folium streamlit-folium")
-    else:
-        # خريطة تفاعلية
-        m = folium.Map(location=[24.7136, 46.6753], zoom_start=12, tiles="OpenStreetMap")
+    col_draw, col_upload = st.columns(2)
+    
+    # الرسم على الخريطة
+    with col_draw:
+        st.markdown("### رسم الخطوط")
+        if FOLIUM_AVAILABLE:
+            m = folium.Map(location=[24.7136, 46.6753], zoom_start=12, tiles="OpenStreetMap")
+            
+            # إضافة الخطوط الموجودة
+            for idx, line in enumerate(st.session_state["network_lines"]):
+                coords = line.get("coords", [])
+                if coords:
+                    color = LINE_COLORS[idx % len(LINE_COLORS)]
+                    folium.PolyLine(coords, color=color, weight=3, opacity=0.8, popup=line["name"]).add_to(m)
+            
+            # أداة الرسم
+            draw = Draw(
+                export=True,
+                position="topleft",
+                draw_options={
+                    "polyline": True,
+                    "polygon": False,
+                    "rectangle": False,
+                    "circle": False,
+                    "marker": False,
+                },
+            )
+            draw.add_to(m)
+            
+            map_data = st_folium(m, width=None, height=400, key="main_map", returned_objects=["last_active_drawing"])
+            
+            if map_data and map_data.get("last_active_drawing"):
+                last_drawing = map_data["last_active_drawing"]
+                if last_drawing.get("geometry", {}).get("type") == "LineString":
+                    coords = [(c[1], c[0]) for c in last_drawing["geometry"]["coordinates"]]
+                    drawing_signature = json.dumps(coords)
+                    if st.session_state.get("last_drawing_signature") != drawing_signature and len(coords) >= 2:
+                        length = sum(calculate_haversine_distance(coords[i], coords[i+1]) for i in range(len(coords)-1))
+                        
+                        new_line = {
+                            "id": str(uuid.uuid4()),
+                            "name": f"خط رسم {len(st.session_state['network_lines']) + 1}",
+                            "length": length,
+                            "coords": coords,
+                            "source": "رسم يدوي",
+                            "selected": True,
+                            "diameter": 600,
+                            "depth": 1.5,
+                            "traps_mode": "تلقائي",
+                            "traps_value": max(1, int(length / 150)),
+                            "manholes_mode": "تلقائي",
+                            "manholes_value": max(2, int(length / 120) + 1),
+                        }
+                        st.session_state["network_lines"].append(new_line)
+                        st.session_state["last_drawing_signature"] = drawing_signature
+                        st.success(f"✅ تمت إضافة {new_line['name']} بطول {new_line['length']:,.0f} متر")
+                        st.rerun()
+    
+    # استيراد الملفات
+    with col_upload:
+        st.markdown("### استيراد الملفات")
         
-        # إضافة الخطوط الموجودة
-        for idx, line in enumerate(st.session_state["network_lines"]):
-            coords = line.get("coords", [])
-            if coords:
-                color = LINE_COLORS[idx % len(LINE_COLORS)]
-                folium.PolyLine(coords, color=color, weight=3, opacity=0.8, popup=line["name"]).add_to(m)
-        
-        # أداة الرسم
-        draw = Draw(
-            export=True,
-            position="topleft",
-            draw_options={
-                "polyline": True,
-                "polygon": False,
-                "rectangle": False,
-                "circle": False,
-                "marker": False,
-                "circlemarker": False,
-            },
+        uploaded_file = st.file_uploader(
+            "اختر ملف GeoJSON أو Shapefile",
+            type=["geojson", "shp", "zip"],
+            help="يمكنك رفع ملف GeoJSON أو Shapefile أو zip يحتوي عليهم"
         )
-        draw.add_to(m)
         
-        map_data = st_folium(m, width=None, height=480, key="main_map", returned_objects=["last_active_drawing"])
-        
-        last_drawing = map_data.get("last_active_drawing") if map_data else None
-        if last_drawing and last_drawing.get("geometry", {}).get("type") == "LineString":
-            coords = [(c[1], c[0]) for c in last_drawing["geometry"]["coordinates"]]
-            drawing_signature = json.dumps(coords)
-            if st.session_state.get("last_drawing_signature") != drawing_signature and len(coords) >= 2:
-                new_line = add_line(coords, "رسم يدوي على الخريطة")
-                st.session_state["last_drawing_signature"] = drawing_signature
-                st.success(f"✅ تمت إضافة {new_line['name']} بطول {new_line['length']:,.0f} متر")
-                st.rerun()
+        if uploaded_file:
+            file_ext = uploaded_file.name.split('.')[-1].lower()
+            
+            if file_ext == "geojson":
+                try:
+                    geojson_data = json.load(uploaded_file)
+                    new_lines = load_geojson_lines(geojson_data)
+                    
+                    if new_lines:
+                        st.session_state["network_lines"].extend(new_lines)
+                        st.success(f"✅ تم استيراد {len(new_lines)} خط من GeoJSON")
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"❌ خطأ في قراءة GeoJSON: {e}")
+            
+            elif file_ext == "shp":
+                try:
+                    with tempfile.NamedTemporaryFile(suffix=".shp", delete=False) as tmp:
+                        tmp.write(uploaded_file.getbuffer())
+                        new_lines = load_shapefile_lines(tmp.name)
+                        
+                        if new_lines:
+                            st.session_state["network_lines"].extend(new_lines)
+                            st.success(f"✅ تم استيراد {len(new_lines)} خط من Shapefile")
+                            st.rerun()
+                except Exception as e:
+                    st.error(f"❌ خطأ في قراءة Shapefile: {e}")
+            
+            elif file_ext == "zip":
+                try:
+                    with tempfile.TemporaryDirectory() as tmpdir:
+                        with zipfile.ZipFile(uploaded_file, 'r') as zip_ref:
+                            zip_ref.extractall(tmpdir)
+                        
+                        # البحث عن ملفات shp أو geojson
+                        for root, dirs, files in os.walk(tmpdir):
+                            for file in files:
+                                if file.endswith('.geojson'):
+                                    with open(os.path.join(root, file)) as f:
+                                        geojson_data = json.load(f)
+                                        new_lines = load_geojson_lines(geojson_data)
+                                        if new_lines:
+                                            st.session_state["network_lines"].extend(new_lines)
+                                
+                                elif file.endswith('.shp'):
+                                    new_lines = load_shapefile_lines(os.path.join(root, file))
+                                    if new_lines:
+                                        st.session_state["network_lines"].extend(new_lines)
+                        
+                        if st.session_state["network_lines"]:
+                            st.success(f"✅ تم استيراد الملفات بنجاح")
+                            st.rerun()
+                except Exception as e:
+                    st.error(f"❌ خطأ في معالجة ZIP: {e}")
     
-    # قائمة الخطوط الحالية
+    # قائمة الخطوط
     st.markdown('<div class="section-title">📋 الخطوط المضافة</div>', unsafe_allow_html=True)
     
     if not st.session_state["network_lines"]:
-        st.info("لا توجد خطوط مضافة بعد. ارسم خطاً على الخريطة لإضافة أول خط.")
+        st.info("لا توجد خطوط مضافة. ارسم على الخريطة أو استورد ملف.")
     else:
         for idx, ln in enumerate(st.session_state["network_lines"]):
-            color = LINE_COLORS[idx % len(LINE_COLORS)]
             col_info, col_del = st.columns([5, 1])
             with col_info:
-                st.markdown(
-                    f'<div class="line-card" style="--lc:{color}">'
-                    f'<div class="lname">{ln["name"]}</div>'
-                    f'<div class="lmeta">الطول: {ln["length"]:,.0f} م · المصدر: {ln["source"]}</div>'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
+                st.write(f"**{ln['name']}** | الطول: {ln['length']:,.0f} م | المصدر: {ln['source']}")
             with col_del:
-                if st.button("🗑️", key=f"del_{ln['id']}", help="حذف هذا الخط", use_container_width=True):
-                    remove_line(ln["id"])
+                if st.button("🗑️", key=f"del_{ln['id']}"):
+                    st.session_state["network_lines"] = [l for l in st.session_state["network_lines"] if l['id'] != ln['id']]
                     st.rerun()
-        
-        if st.button("🗑️ حذف جميع الخطوط", key="del_all_lines"):
-            st.session_state["network_lines"] = []
-            st.session_state["combined_result"] = None
-            st.rerun()
+
+import tempfile
 
 # ╔════════════════════════════════════════════════════════════════════════════════╗
-# ║ TAB 2 ── حساب التكاليف
+# ║ TAB 2 - تحليل الشبكة
 # ╚════════════════════════════════════════════════════════════════════════════════╝
 
 with tab2:
-    st.markdown('<div class="section-title">📊 إعدادات كل خط</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">🌐 تحليل الشبكة</div>', unsafe_allow_html=True)
     
     if not st.session_state["network_lines"]:
-        st.info("لا توجد خطوط متاحة. أضف خطوطاً من التبويب الأول أولاً.")
+        st.warning("لا توجد خطوط للتحليل. أضف خطوطاً أولاً من التبويب السابق.")
     else:
-        st.markdown('<div class="map-info">💡 حدّد القطر والعمق لكل خط على حدة، واختر الخطوط التي تريد تضمينها في الحساب الإجمالي.</div>', unsafe_allow_html=True)
+        if st.button("🔍 حلل الشبكة", use_container_width=True):
+            with st.spinner("جاري تحليل الشبكة..."):
+                G, line_details = build_network_from_lines(st.session_state["network_lines"])
+                network_stats = calculate_network_stats(G, line_details)
+                st.session_state["network_stats"] = network_stats
+                st.success("✅ تم تحليل الشبكة بنجاح!")
+        
+        if st.session_state["network_stats"]:
+            stats = st.session_state["network_stats"]
+            
+            # عرض الإحصائيات
+            col1, col2, col3, col4 = st.columns(4)
+            col1.markdown(f'<div class="mc"><div class="v">{stats["num_nodes"]}</div><div class="l">المناهل</div></div>', unsafe_allow_html=True)
+            col2.markdown(f'<div class="mc"><div class="v">{stats["num_edges"]}</div><div class="l">الأنابيب</div></div>', unsafe_allow_html=True)
+            col3.markdown(f'<div class="mc"><div class="v">{stats["num_components"]}</div><div class="l">المكونات</div></div>', unsafe_allow_html=True)
+            col4.markdown(f'<div class="mc"><div class="v">{stats["density"]:.3f}</div><div class="l">الكثافة</div></div>', unsafe_allow_html=True)
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("الطول الإجمالي", f"{stats['total_length']/1000:.2f} كم")
+            with col2:
+                st.metric("متوسط الاتصالات", f"{stats['avg_degree']:.2f}")
+            
+            if stats["is_connected"]:
+                st.markdown('<div class="success-box">✅ الشبكة متصلة بالكامل</div>', unsafe_allow_html=True)
+            else:
+                st.markdown(f'<div class="warning-box">⚠️ الشبكة بها {stats["num_components"]} أجزاء منفصلة</div>', unsafe_allow_html=True)
+            
+            # رسم الشبكة
+            st.markdown("### 📊 رسم الشبكة")
+            fig, ax = plt.subplots(figsize=(12, 8), facecolor='white')
+            
+            G, _ = build_network_from_lines(st.session_state["network_lines"])
+            pos = nx.spring_layout(G, k=0.5, iterations=50, seed=42)
+            
+            nx.draw_networkx_edges(G, pos, width=2, alpha=0.6, edge_color='#1a5fa8', ax=ax)
+            nx.draw_networkx_nodes(G, pos, node_color='#FF6B6B', node_size=300, ax=ax, edgecolors='#0a2a5e', linewidths=2)
+            nx.draw_networkx_labels(G, pos, labels={node: f"M{i}" for i, node in enumerate(G.nodes())}, 
+                                   font_size=8, font_weight='bold', ax=ax)
+            
+            ax.set_title("🌐 رسم شبكة الصرف", fontsize=14, fontweight='bold', pad=20)
+            ax.axis('off')
+            
+            st.pyplot(fig, use_container_width=True)
+
+# ╔════════════════════════════════════════════════════════════════════════════════╗
+# ║ TAB 3 - حساب التكاليف
+# ╚════════════════════════════════════════════════════════════════════════════════╝
+
+with tab3:
+    st.markdown('<div class="section-title">💰 حساب التكاليف</div>', unsafe_allow_html=True)
+    
+    if not st.session_state["network_lines"]:
+        st.warning("لا توجد خطوط للحساب. أضف خطوطاً أولاً.")
+    else:
+        st.markdown("#### إعدادات الخطوط")
         
         for ln in st.session_state["network_lines"]:
             with st.expander(f"⚙️ {ln['name']} — {ln['length']:,.0f} م", expanded=False):
-                ln["selected"] = st.checkbox("تضمين هذا الخط في الحساب الإجمالي", value=ln["selected"], key=f"sel_{ln['id']}")
+                ln["selected"] = st.checkbox("تضمين في الحساب", value=ln["selected"], key=f"sel_{ln['id']}")
                 
                 col1, col2 = st.columns(2)
                 with col1:
                     diam_options = sorted(PIPE_PRICES.keys())
                     ln["diameter"] = st.selectbox(
-                        "قطر الأنبوب (ملم)", options=diam_options,
+                        "القطر (ملم)", options=diam_options,
                         index=diam_options.index(ln["diameter"]) if ln["diameter"] in diam_options else 0,
                         key=f"diam_{ln['id']}",
                     )
                 with col2:
                     ln["depth"] = st.number_input(
-                        "متوسط العمق (م)", min_value=0.5, value=float(ln["depth"]), step=0.1, key=f"depth_{ln['id']}",
+                        "العمق (م)", min_value=0.5, value=float(ln["depth"]), step=0.1, key=f"depth_{ln['id']}",
                     )
-                
-                col3, col4 = st.columns(2)
-                with col3:
-                    ln["traps_mode"] = st.radio(
-                        "المصائد:", ["تلقائي", "يدوي"], horizontal=True,
-                        index=0 if ln["traps_mode"] == "تلقائي" else 1, key=f"trapsmode_{ln['id']}",
-                    )
-                    if ln["traps_mode"] == "يدوي":
-                        ln["traps_value"] = st.number_input(
-                            "عدد المصائد", min_value=1, value=int(ln["traps_value"]), step=1, key=f"trapsval_{ln['id']}",
-                        )
-                with col4:
-                    ln["manholes_mode"] = st.radio(
-                        "المناهل:", ["تلقائي", "يدوي"], horizontal=True,
-                        index=0 if ln["manholes_mode"] == "تلقائي" else 1, key=f"manholemode_{ln['id']}",
-                    )
-                    if ln["manholes_mode"] == "يدوي":
-                        ln["manholes_value"] = st.number_input(
-                            "عدد المناهل", min_value=1, value=int(ln["manholes_value"]), step=1, key=f"manholeval_{ln['id']}",
-                        )
-                
-                # عرض معلومات سريعة عن المناهل والمصائد
-                auto_manholes = calculate_auto_manholes(ln["length"], ln["diameter"])
-                auto_traps = calculate_auto_traps(ln["length"])
-                st.caption(f"📌 المقترحات التلقائية: {auto_manholes} منهل، {auto_traps} مصائد")
         
-        if st.button("💰 احسب تكلفة الخطوط المختارة", key="calc_combined", use_container_width=True):
-            selected = [ln for ln in st.session_state["network_lines"] if ln["selected"]]
-            if not selected:
-                st.warning("⚠️ لم يتم تحديد أي خط للحساب.")
+        if st.button("💰 احسب التكاليف من الشبكة", use_container_width=True, type="primary"):
+            if not st.session_state.get("network_stats"):
+                st.error("❌ يجب تحليل الشبكة أولاً من التبويب السابق")
             else:
-                with st.spinner("جاري حساب جميع الخطوط..."):
-                    combined = build_combined_result(selected)
+                with st.spinner("جاري حساب التكاليف..."):
+                    selected = [ln for ln in st.session_state["network_lines"] if ln["selected"]]
+                    combined = generate_cost_from_network(selected, st.session_state["network_stats"])
                     st.session_state["combined_result"] = combined
-                    st.success(f"✅ تم حساب {len(selected)} خط بنجاح!")
-    
-    if st.session_state["combined_result"]:
-        combined = st.session_state["combined_result"]
+                    st.success("✅ تم الحساب بنجاح!")
+                    st.rerun()
         
-        st.markdown('<div class="section-title">📋 ملخص الخطوط</div>', unsafe_allow_html=True)
-        total_length = sum(pl["line"]["length"] for pl in combined["per_line"])
-        col1, col2, col3, col4 = st.columns(4)
-        col1.markdown(f'<div class="mc"><div class="v">{len(combined["per_line"])}</div><div class="l">الخطوط</div></div>', unsafe_allow_html=True)
-        col2.markdown(f'<div class="mc"><div class="v">{total_length:,.0f}</div><div class="l">الطول (م)</div></div>', unsafe_allow_html=True)
-        col3.markdown(f'<div class="mc"><div class="v">{combined["total_manholes"]}</div><div class="l">المناهل</div></div>', unsafe_allow_html=True)
-        col4.markdown(f'<div class="mc"><div class="v">{combined["total_traps"]}</div><div class="l">المصائد</div></div>', unsafe_allow_html=True)
-        
-        # جدول التكاليف
-        st.markdown('<div class="section-title">📦 الكميات والتكاليف</div>', unsafe_allow_html=True)
-        
-        items_data = []
-        for item in combined["merged_items"]:
-            avg_price = item["total"] / item["qty"] if item["qty"] > 0 else 0
-            items_data.append({
-                "البند": item["name"],
-                "الكمية": f"{item['qty']:,.2f}",
-                "الوحدة": item["unit"],
-                "السعر (المتوسط)": f"{avg_price:,.0f}",
-                "الإجمالي": f"{item['total']:,.0f}"
-            })
-        
-        st.dataframe(items_data, use_container_width=True, hide_index=True)
-        
-        st.markdown(f'### 💵 **التكلفة الإجمالية: {combined["grand_total"]:,.0f} ريال**', unsafe_allow_html=False)
-
-# ╔════════════════════════════════════════════════════════════════════════════════╗
-# ║ TAB 3 ── تحليل الشبكة بـ NetworkX
-# ╚════════════════════════════════════════════════════════════════════════════════╝
-
-with tab3:
-    st.markdown('<div class="section-title">📊 تحليل الشبكة المتقدم</div>', unsafe_allow_html=True)
-    
-    selected_for_analysis = [ln for ln in st.session_state["network_lines"] if ln.get("selected", True)]
-    
-    if not selected_for_analysis:
-        st.warning("⚠️ لا توجد خطوط مختارة للتحليل. اختر خطوطاً من التبويب الأول أولاً.")
-    else:
-        # بناء الشبكة
-        G = build_network_graph(selected_for_analysis)
-        
-        if G.number_of_nodes() == 0:
-            st.error("❌ لا يمكن بناء الشبكة. تأكد من وجود إحداثيات صحيحة للخطوط.")
-        else:
-            # حساب الإحصائيات
-            stats = calculate_network_stats(G, selected_for_analysis)
+        if st.session_state["combined_result"]:
+            combined = st.session_state["combined_result"]
             
-            st.markdown('<div class="section-title">📈 إحصائيات الشبكة</div>', unsafe_allow_html=True)
+            st.markdown("### 📊 ملخص التكاليف")
             
             col1, col2, col3, col4 = st.columns(4)
-            col1.markdown(f'<div class="mc"><div class="v">{stats["num_nodes"]}</div><div class="l">المناهل (Nodes)</div></div>', unsafe_allow_html=True)
-            col2.markdown(f'<div class="mc"><div class="v">{stats["num_edges"]}</div><div class="l">الأنابيب (Edges)</div></div>', unsafe_allow_html=True)
-            col3.markdown(f'<div class="mc"><div class="v">{stats["num_connected_components"]}</div><div class="l">المكونات المتصلة</div></div>', unsafe_allow_html=True)
-            col4.markdown(f'<div class="mc"><div class="v">{stats["network_density"]:.3f}</div><div class="l">كثافة الشبكة</div></div>', unsafe_allow_html=True)
+            col1.markdown(f'<div class="mc"><div class="v">{len(combined["per_line"])}</div><div class="l">الخطوط</div></div>', unsafe_allow_html=True)
+            col2.markdown(f'<div class="mc"><div class="v">{combined["total_manholes"]}</div><div class="l">المناهل</div></div>', unsafe_allow_html=True)
+            col3.markdown(f'<div class="mc"><div class="v">{combined["total_traps"]}</div><div class="l">المصائد</div></div>', unsafe_allow_html=True)
+            col4.markdown(f'<div class="mc"><div class="v">{combined["grand_total"]/1e6:.2f}M</div><div class="l">التكلفة (ريال)</div></div>', unsafe_allow_html=True)
             
-            col1, col2, col3 = st.columns(3)
-            col1.metric("متوسط درجة الاتصال", f"{stats['avg_degree']:.2f}")
-            col2.metric("إجمالي طول الشبكة", f"{stats['total_length']/1000:.2f} كم")
+            # جدول الكميات المجمعة
+            st.markdown("### 📦 الكميات")
             
-            # معلومات الخطوط
-            st.markdown('<div class="section-title">🔗 تفاصيل الخطوط</div>', unsafe_allow_html=True)
-            lines_info = []
-            for idx, num_nodes in stats["lines_nodes"].items():
-                if idx < len(selected_for_analysis):
-                    ln = selected_for_analysis[idx]
-                    lines_info.append({
-                        "الخط": ln["name"],
-                        "المناهل": num_nodes,
-                        "الطول": f"{ln['length']:,.0f} م",
-                        "القطر": f"{ln.get('diameter', 600)} ملم"
-                    })
+            items_df = pd.DataFrame([
+                {
+                    "البند": item["name"],
+                    "الكمية": f"{item['qty']:,.2f}",
+                    "الوحدة": item["unit"],
+                    "السعر": f"{(item['total']/item['qty'] if item['qty']>0 else 0):,.0f}",
+                    "الإجمالي": f"{item['total']:,.0f}",
+                }
+                for item in combined["merged_items"]
+            ])
+            st.dataframe(items_df, use_container_width=True, hide_index=True)
             
-            st.dataframe(lines_info, use_container_width=True, hide_index=True)
-            
-            # رسم الشبكة
-            st.markdown('<div class="section-title">🌐 رسم الشبكة البصري</div>', unsafe_allow_html=True)
-            visualize_network(G, selected_for_analysis)
-            
-            # تحليل الاتصالية
-            st.markdown('<div class="section-title">🔍 تحليل الاتصالية</div>', unsafe_allow_html=True)
-            
-            if nx.is_connected(G):
-                st.success("✅ الشبكة متصلة بالكامل")
-            else:
-                components = list(nx.connected_components(G))
-                st.warning(f"⚠️ الشبكة بها {len(components)} مكون منفصل")
-                for i, comp in enumerate(components):
-                    st.text(f"المكون {i+1}: {len(comp)} منهل")
+            st.markdown(f"### 💵 **التكلفة الإجمالية: {combined['grand_total']:,.0f} ريال**")
 
-st.markdown("<div style='text-align:center;color:#999;font-size:0.75rem;margin-top:20px'>© 2025 Flood Drainage Networks - Advanced Analysis Version</div>", unsafe_allow_html=True)
+# ╔════════════════════════════════════════════════════════════════════════════════╗
+# ║ TAB 4 - التقرير
+# ╚════════════════════════════════════════════════════════════════════════════════╝
+
+with tab4:
+    st.markdown('<div class="section-title">📄 التقرير الشامل</div>', unsafe_allow_html=True)
+    
+    if not st.session_state["combined_result"]:
+        st.warning("لا توجد بيانات للتقرير. أكمل الخطوات السابقة أولاً.")
+    else:
+        combined = st.session_state["combined_result"]
+        
+        col_pdf, col_csv = st.columns(2)
+        
+        with col_pdf:
+            pdf_bytes = generate_pdf_report(
+                combined, 
+                st.session_state["network_lines"],
+                st.session_state.get("network_stats")
+            )
+            
+            if pdf_bytes:
+                st.download_button(
+                    label="📥 تحميل PDF",
+                    data=pdf_bytes,
+                    file_name=f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                )
+        
+        with col_csv:
+            csv_data = "البند,الكمية,الوحدة,السعر,الإجمالي\n"
+            for item in combined["merged_items"]:
+                avg_price = item["total"] / item["qty"] if item["qty"] > 0 else 0
+                csv_data += f"{item['name']},{item['qty']:.2f},{item['unit']},{avg_price:.0f},{item['total']:.0f}\n"
+            
+            st.download_button(
+                label="📥 تحميل CSV",
+                data=csv_data,
+                file_name=f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
+        
+        # معاينة التقرير
+        st.markdown("### 📋 معاينة التقرير")
+        
+        with st.expander("ملخص المشروع", expanded=True):
+            st.write(f"**عدد الخطوط:** {len(combined['per_line'])}")
+            st.write(f"**الطول الإجمالي:** {sum(pl['line'].get('length', 0) for pl in combined['per_line']):,.0f} متر")
+            st.write(f"**عدد المناهل:** {combined['total_manholes']}")
+            st.write(f"**عدد المصائد:** {combined['total_traps']}")
+            st.write(f"**التكلفة الإجمالية:** {combined['grand_total']:,.0f} ريال")
+        
+        with st.expander("تفاصيل الخطوط"):
+            for pl in combined["per_line"]:
+                ln = pl["line"]
+                st.write(f"**{ln['name']}**")
+                st.write(f"- الطول: {ln['length']:,.0f} متر")
+                st.write(f"- القطر: {ln.get('diameter', 600)} ملم")
+                st.write(f"- العمق: {ln.get('depth', 1.5):.2f} متر")
+                st.write(f"- المناهل: {pl['manholes']}")
+                st.write(f"- المصائد: {pl['traps']}")
+                st.write(f"- التكلفة: {pl['total']:,.0f} ريال")
+                st.divider()
+        
+        with st.expander("الكميات المجمعة"):
+            st.dataframe(
+                pd.DataFrame([
+                    {
+                        "البند": item["name"],
+                        "الكمية": f"{item['qty']:,.2f}",
+                        "الوحدة": item["unit"],
+                        "الإجمالي": f"{item['total']:,.0f}",
+                    }
+                    for item in combined["merged_items"]
+                ]),
+                use_container_width=True,
+                hide_index=True
+            )
+
+st.markdown("<div style='text-align:center;color:#999;font-size:0.75rem;margin-top:20px'>© 2025 Flood Drainage Network Analysis</div>", unsafe_allow_html=True)
