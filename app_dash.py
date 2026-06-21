@@ -18,12 +18,6 @@ try:
 except:
     FOLIUM_AVAILABLE = False
 
-try:
-    import geopandas as gpd
-    GEOPANDAS_AVAILABLE = True
-except:
-    GEOPANDAS_AVAILABLE = False
-
 # ═════════════════════════════════════════════════════════════════════════════════
 # إعدادات الصفحة والأنماط
 # ═════════════════════════════════════════════════════════════════════════════════
@@ -77,36 +71,15 @@ html, body, [class*="css"] {
 .header-main p {
     font-size: 1rem;
     opacity: 0.95;
-    margin: 0;
 }
 
-/* Sidebar محسّن */
+/* Sidebar */
 [data-testid="stSidebar"] {
     background: linear-gradient(180deg, #0a2a5e 0%, #1a5fa8 100%) !important;
 }
 
 [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] {
     color: white !important;
-}
-
-/* أزرار Sidebar */
-.sidebar-section {
-    background: white;
-    border-radius: 12px;
-    padding: 15px;
-    margin: 12px 0;
-    border-left: 5px solid #1a5fa8;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-}
-
-.sidebar-title {
-    font-size: 1.1rem;
-    font-weight: 900;
-    color: #0a2a5e;
-    margin-bottom: 15px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
 }
 
 /* البطاقات */
@@ -118,6 +91,12 @@ html, body, [class*="css"] {
     border-left: 5px solid #1a5fa8;
     box-shadow: 0 2px 8px rgba(0,0,0,0.08);
     text-align: center;
+    transition: all 0.3s ease;
+}
+
+.metric-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.12);
 }
 
 .metric-value {
@@ -196,7 +175,6 @@ html, body, [class*="css"] {
     font-size: 1rem !important;
     padding: 12px 20px !important;
     min-height: 50px !important;
-    width: 100% !important;
     cursor: pointer !important;
     transition: all 0.3s ease !important;
     box-shadow: 0 4px 12px rgba(26, 95, 168, 0.3) !important;
@@ -205,6 +183,11 @@ html, body, [class*="css"] {
 .stButton > button:hover {
     transform: translateY(-2px) !important;
     box-shadow: 0 6px 16px rgba(26, 95, 168, 0.4) !important;
+}
+
+.stDownloadButton > button {
+    background: linear-gradient(135deg, #28a745 0%, #1e7e34 100%) !important;
+    color: white !important;
 }
 
 /* جداول */
@@ -221,30 +204,43 @@ html, body, [class*="css"] {
     border-left: 4px solid #1a5fa8 !important;
 }
 
-/* التخطيط */
-.element-container {
-    animation: fadeIn 0.3s ease-in;
+/* التبويبات */
+[data-baseweb="tab-list"] {
+    gap: 5px !important;
 }
 
-@keyframes fadeIn {
-    from { opacity: 0; transform: translateY(10px); }
-    to { opacity: 1; transform: translateY(0); }
+[data-baseweb="tab"] {
+    background-color: #f0f5fa !important;
+    border-radius: 8px 8px 0 0 !important;
+    border-left: 3px solid transparent !important;
 }
 
-/* responsive */
-@media (max-width: 768px) {
-    .header-main h1 {
-        font-size: 1.5rem;
-    }
-    
-    .metric-value {
-        font-size: 1.5rem;
-    }
+[aria-selected="true"] {
+    border-left-color: #1a5fa8 !important;
+    background-color: white !important;
 }
 </style>
 """
 
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+
+# ═════════════════════════════════════════════════════════════════════════════════
+# الثوابت
+# ═════════════════════════════════════════════════════════════════════════════════
+
+PIPE_PRICES = {
+    400: 454, 500: 619, 600: 725, 700: 906, 800: 1045,
+    900: 1225, 1000: 1440, 1100: 1600, 1200: 1812, 1300: 1920, 1400: 2132,
+}
+
+BOX_DIMENSIONS = {
+    "0.6×0.6": {"width": 0.6, "height": 0.6, "price": 850},
+    "0.8×0.6": {"width": 0.8, "height": 0.6, "price": 950},
+    "1.0×0.6": {"width": 1.0, "height": 0.6, "price": 1050},
+    "1.0×0.8": {"width": 1.0, "height": 0.8, "price": 1200},
+    "1.2×0.8": {"width": 1.2, "height": 0.8, "price": 1400},
+    "1.5×1.0": {"width": 1.5, "height": 1.0, "price": 1800},
+}
 
 # ═════════════════════════════════════════════════════════════════════════════════
 # دوال مساعدة
@@ -265,13 +261,55 @@ def haversine_distance(coord1, coord2):
     c = 2 * math.asin(math.sqrt(a))
     return R * c
 
+def calculate_auto_manholes(length, diameter=600):
+    """حساب عدد المناهل تلقائياً"""
+    if diameter >= 1000:
+        spacing = 150
+    elif diameter <= 600:
+        spacing = 100
+    else:
+        spacing = 120
+    
+    return max(2, int(length / spacing) + 1)
+
+def calculate_auto_traps(length):
+    """حساب عدد المصائد تلقائياً"""
+    return max(1, int(length / 150))
+
+def calculate_line_cost(line):
+    """حساب تكلفة خط واحد"""
+    diameter = line.get("diameter", 600)
+    depth = line.get("depth", 1.5)
+    length = line.get("length", 0)
+    
+    price_per_meter = PIPE_PRICES.get(diameter, 725)
+    
+    # عدد المناهل والمصائد
+    num_manholes = calculate_auto_manholes(length, diameter)
+    num_traps = calculate_auto_traps(length)
+    
+    # البنود
+    items = [
+        {"البند": "أنابيب صرف", "الكمية": length, "الوحدة": "م", "السعر": price_per_meter, "الإجمالي": length * price_per_meter},
+        {"البند": "حفر الخندق", "الكمية": length, "الوحدة": "م", "السعر": 50, "الإجمالي": length * 50},
+        {"البند": "مناهل", "الكمية": num_manholes, "الوحدة": "عدد", "السعر": 3000, "الإجمالي": num_manholes * 3000},
+        {"البند": "مصائد", "الكمية": num_traps, "الوحدة": "عدد", "السعر": 2000, "الإجمالي": num_traps * 2000},
+        {"البند": "ردم وتسوية", "الكمية": length * depth, "الوحدة": "م³", "السعر": 30, "الإجمالي": length * depth * 30},
+    ]
+    
+    return {
+        "items": items,
+        "total": sum(item["الإجمالي"] for item in items),
+        "num_manholes": num_manholes,
+        "num_traps": num_traps,
+    }
+
 class AdvancedNetworkAnalyzer:
-    """محلل الشبكة المتقدم"""
+    """محلل الشبكة"""
     
     def __init__(self, lines):
         self.lines = [ln for ln in lines if ln.get("selected", True)]
         self.G = nx.Graph()
-        self.G_directed = nx.DiGraph()
         self._build_network()
     
     def _build_network(self):
@@ -288,10 +326,9 @@ class AdvancedNetworkAnalyzer:
                 distance = haversine_distance(coords[i], coords[i+1])
                 
                 self.G.add_edge(start, end, distance=distance, diameter=line.get("diameter", 600))
-                self.G_directed.add_edge(start, end, distance=distance, diameter=line.get("diameter", 600))
     
     def get_stats(self):
-        """احصائيات الشبكة"""
+        """إحصائيات الشبكة"""
         if self.G.number_of_nodes() == 0:
             return None
         
@@ -309,8 +346,7 @@ class AdvancedNetworkAnalyzer:
         try:
             betweenness = nx.betweenness_centrality(self.G, weight='distance')
             degree = nx.degree_centrality(self.G)
-            closeness = nx.closeness_centrality(self.G, distance='distance')
-            return {"betweenness": betweenness, "degree": degree, "closeness": closeness}
+            return {"betweenness": betweenness, "degree": degree}
         except:
             return None
     
@@ -330,6 +366,8 @@ if "lines" not in st.session_state:
     st.session_state.lines = []
 if "analyzer" not in st.session_state:
     st.session_state.analyzer = None
+if "cost_result" not in st.session_state:
+    st.session_state.cost_result = None
 if "current_section" not in st.session_state:
     st.session_state.current_section = "الرئيسية"
 
@@ -340,34 +378,23 @@ if "current_section" not in st.session_state:
 st.markdown("""
 <div class="header-main">
     <h1>🌊 محلل شبكات السيول المتقدم</h1>
-    <p>أداة احترافية لتحليل وتصميم شبكات الصرف السيلية بتقنيات NetworkX المتطورة</p>
+    <p>تطبيق احترافي لتحليل وحساب تكاليف شبكات الصرف السيلية</p>
 </div>
 """, unsafe_allow_html=True)
 
 # ═════════════════════════════════════════════════════════════════════════════════
-# Sidebar - القائمة الرئيسية
+# Sidebar
 # ═════════════════════════════════════════════════════════════════════════════════
 
 with st.sidebar:
     st.markdown("## 📋 القائمة الرئيسية")
     st.markdown("---")
     
-    st.markdown("""
-    <div style="background: rgba(255,255,255,0.1); padding: 15px; border-radius: 10px; color: white;">
-        <h4 style="margin-top: 0; text-align: center;">اختر القسم الذي تريده</h4>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    st.markdown("<br>", unsafe_allow_html=True)
-    
-    # الأقسام الرئيسية
     sections = {
         "🏠 الرئيسية": "الرئيسية",
         "🗺️ إدارة الخطوط": "الخطوط",
+        "💰 حساب التكاليف": "التكاليف",
         "🌐 تحليل الشبكة": "تحليل",
-        "🔀 تحليل الـ Flow": "flow",
-        "📦 القنوات الصندوقية": "قنوات",
-        "⚠️ تقييم المخاطر": "مخاطر",
         "📊 التقارير": "تقارير"
     }
     
@@ -384,31 +411,35 @@ with st.sidebar:
     
     # معلومات سريعة
     st.markdown("""
-    <div style="background: rgba(255,255,255,0.1); padding: 15px; border-radius: 10px;">
-        <h4 style="color: white; margin-top: 0;">📊 معلومات سريعة</h4>
-    </div>
+    <h4 style="color: white; text-align: center;">📊 معلومات سريعة</h4>
     """, unsafe_allow_html=True)
     
     col1, col2 = st.columns(2)
     with col1:
-        st.metric("الخطوط المضافة", len(st.session_state.lines))
+        st.metric("الخطوط", len(st.session_state.lines))
     with col2:
         total_length = sum(ln.get("length", 0) for ln in st.session_state.lines)
-        st.metric("الطول الكلي", f"{total_length/1000:.1f} كم")
+        st.metric("الطول", f"{total_length/1000:.1f} كم")
+    
+    if st.session_state.cost_result:
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("المناهل", st.session_state.cost_result.get("total_manholes", 0))
+        with col2:
+            st.metric("المصائد", st.session_state.cost_result.get("total_traps", 0))
     
     st.markdown("---")
     
-    # تعليمات
-    with st.expander("❓ كيفية الاستخدام", expanded=False):
+    with st.expander("❓ كيفية الاستخدام"):
         st.markdown("""
-        1. **أضف الخطوط**: من قسم إدارة الخطوط
-        2. **حلل الشبكة**: من قسم تحليل الشبكة
-        3. **تفقد المخاطر**: من قسم تقييم المخاطر
-        4. **احمل التقرير**: من قسم التقارير
+        1️⃣ **أضف الخطوط**: من إدارة الخطوط
+        2️⃣ **احسب التكاليف**: من حساب التكاليف
+        3️⃣ **حلل الشبكة**: من تحليل الشبكة
+        4️⃣ **احصل على التقرير**: من التقارير
         """)
 
 # ═════════════════════════════════════════════════════════════════════════════════
-# محتوى الصفحة حسب الاختيار
+# المحتوى الرئيسي
 # ═════════════════════════════════════════════════════════════════════════════════
 
 # 1. الصفحة الرئيسية
@@ -420,16 +451,14 @@ if st.session_state.current_section == "الرئيسية":
         <div class="metric-card">
             <div class="metric-value">🗺️</div>
             <div class="metric-label">إدارة الخطوط</div>
-            <p style="font-size: 0.85rem; margin-top: 8px; color: #666;">رسم واستيراد الخطوط</p>
         </div>
         """, unsafe_allow_html=True)
     
     with col2:
         st.markdown("""
         <div class="metric-card">
-            <div class="metric-value">🌐</div>
-            <div class="metric-label">تحليل الشبكة</div>
-            <p style="font-size: 0.85rem; margin-top: 8px; color: #666;">احصائيات متقدمة</p>
+            <div class="metric-value">💰</div>
+            <div class="metric-label">حساب التكاليف</div>
         </div>
         """, unsafe_allow_html=True)
     
@@ -438,59 +467,43 @@ if st.session_state.current_section == "الرئيسية":
         <div class="metric-card">
             <div class="metric-value">📊</div>
             <div class="metric-label">التقارير</div>
-            <p style="font-size: 0.85rem; margin-top: 8px; color: #666;">تحميل النتائج</p>
         </div>
         """, unsafe_allow_html=True)
     
     st.markdown("---")
-    
-    st.markdown("<div class='section-title'>👋 مرحباً بك في محلل شبكات السيول</div>", unsafe_allow_html=True)
+    st.markdown("<div class='section-title'>👋 مرحباً بك</div>", unsafe_allow_html=True)
     
     col1, col2 = st.columns(2)
     
     with col1:
         st.markdown("""
-        ### 🎯 ما هذا التطبيق؟
+        ### 🎯 المميزات الرئيسية
         
-        تطبيق احترافي يستخدم تقنيات NetworkX المتقدمة لتحليل شبكات الصرف السيلية بطرق علمية دقيقة.
-        
-        #### المميزات الرئيسية:
-        - 🗺️ رسم خطوط تفاعلي
-        - 📊 تحليل شبكات متقدم
-        - 🔀 تحليل تدفق الجريان
-        - ⚠️ تقييم المخاطر الذكي
-        - 📦 دعم القنوات الصندوقية
+        ✅ **رسم تفاعلي**: ارسم خطوطك على الخريطة
+        ✅ **استيراد الملفات**: استورد من GeoJSON
+        ✅ **حساب تلقائي**: احسب المناهل والمصائد
+        ✅ **تحليل الشبكة**: احصل على إحصائيات متقدمة
+        ✅ **تقارير شاملة**: احمل النتائج بسهولة
         """)
     
     with col2:
         st.markdown("""
         ### 🚀 البدء السريع
         
-        اتبع هذه الخطوات:
+        1. اذهب لـ **إدارة الخطوط**
+        2. ارسم أو استورد الخطوط
+        3. اذهب لـ **حساب التكاليف**
+        4. شاهد النتائج والكميات
+        5. احمل التقرير
         
-        1. **اذهب لـ 🗺️ إدارة الخطوط**
-           - ارسم خطوطك أو استورد ملفات
-        
-        2. **اذهب لـ 🌐 تحليل الشبكة**
-           - انقر زر التحليل
-           - شاهد النتائج
-        
-        3. **اذهب لـ ⚠️ تقييم المخاطر**
-           - اعرض درجات الخطورة
-        
-        4. **اذهب لـ 📊 التقارير**
-           - احمل ملفات النتائج
+        **سهل وسريع وفعّال!** 💪
         """)
-    
-    st.markdown("---")
-    
-    st.info("💡 استخدم القائمة الجانبية للتنقل بين الأقسام المختلفة")
 
 # 2. إدارة الخطوط
 elif st.session_state.current_section == "الخطوط":
     st.markdown("<div class='section-title'>🗺️ إدارة الخطوط</div>", unsafe_allow_html=True)
     
-    tab1, tab2, tab3 = st.tabs(["🎨 رسم الخطوط", "📤 استيراد ملفات", "📋 الخطوط المضافة"])
+    tab1, tab2, tab3 = st.tabs(["🎨 رسم الخطوط", "📤 استيراد", "📋 الخطوط"])
     
     with tab1:
         st.markdown("### رسم الخطوط على الخريطة")
@@ -531,6 +544,7 @@ elif st.session_state.current_section == "الخطوط":
                         }
                         st.session_state.lines.append(new_line)
                         st.session_state.analyzer = None
+                        st.session_state.cost_result = None
                         st.success(f"✅ تم إضافة {new_line['name']}")
                         st.rerun()
         else:
@@ -556,7 +570,7 @@ elif st.session_state.current_section == "الخطوط":
                                 
                                 new_line = {
                                     "id": str(uuid.uuid4()),
-                                    "name": feature.get("properties", {}).get("name", f"خط GeoJSON {idx+1}"),
+                                    "name": feature.get("properties", {}).get("name", f"خط {idx+1}"),
                                     "length": length,
                                     "coords": coords,
                                     "source": "GeoJSON",
@@ -567,56 +581,50 @@ elif st.session_state.current_section == "الخطوط":
                                 st.session_state.lines.append(new_line)
                     
                     st.session_state.analyzer = None
+                    st.session_state.cost_result = None
                     st.success(f"✅ تم استيراد {len(features)} خط")
                     st.rerun()
             except Exception as e:
                 st.error(f"❌ خطأ: {e}")
     
     with tab3:
-        st.markdown("### الخطوط المضافة")
+        st.markdown("### الخطوط المضافة وإعداداتها")
         
         if not st.session_state.lines:
-            st.info("لا توجد خطوط مضافة حتى الآن")
+            st.info("لا توجد خطوط مضافة")
         else:
             for line in st.session_state.lines:
-                col1, col2 = st.columns([4, 1])
-                
-                with col1:
-                    st.write(f"**{line['name']}** | {line['length']:,.0f} م | {line['source']}")
-                
-                with col2:
-                    if st.button("🗑️", key=line['id']):
-                        st.session_state.lines = [l for l in st.session_state.lines if l['id'] != line['id']]
-                        st.rerun()
-            
-            st.markdown("---")
-            
-            st.markdown("### ⚙️ إعدادات الخطوط")
-            
-            for line in st.session_state.lines:
-                with st.expander(f"إعدادات: {line['name']}", expanded=False):
-                    line["selected"] = st.checkbox("تفعيل هذا الخط", value=line["selected"], key=f"sel_{line['id']}")
+                with st.expander(f"✏️ {line['name']} - {line['length']:,.0f} م", expanded=True):
+                    col1, col2, col3, col4 = st.columns(4)
                     
-                    col1, col2 = st.columns(2)
                     with col1:
+                        line["selected"] = st.checkbox("✅ تفعيل", value=line["selected"], key=f"sel_{line['id']}")
+                    
+                    with col2:
                         line["diameter"] = st.selectbox(
                             "القطر (ملم)",
-                            [400, 500, 600, 700, 800, 900, 1000, 1100, 1200],
-                            index=2,
+                            sorted(PIPE_PRICES.keys()),
+                            index=list(PIPE_PRICES.keys()).index(line.get("diameter", 600)),
                             key=f"diam_{line['id']}"
                         )
-                    with col2:
+                    
+                    with col3:
                         line["depth"] = st.number_input(
                             "العمق (م)",
                             min_value=0.5,
-                            value=1.5,
+                            value=line.get("depth", 1.5),
                             step=0.1,
                             key=f"depth_{line['id']}"
                         )
+                    
+                    with col4:
+                        if st.button("🗑️ حذف", key=f"del_{line['id']}"):
+                            st.session_state.lines = [l for l in st.session_state.lines if l['id'] != line['id']]
+                            st.rerun()
 
-# 3. تحليل الشبكة
-elif st.session_state.current_section == "تحليل":
-    st.markdown("<div class='section-title'>🌐 تحليل الشبكة</div>", unsafe_allow_html=True)
+# 3. حساب التكاليف
+elif st.session_state.current_section == "التكاليف":
+    st.markdown("<div class='section-title'>💰 حساب التكاليف والكميات</div>", unsafe_allow_html=True)
     
     if not st.session_state.lines:
         st.warning("⚠️ أضف خطوطاً أولاً من قسم إدارة الخطوط")
@@ -624,10 +632,162 @@ elif st.session_state.current_section == "تحليل":
         col1, col2 = st.columns([3, 1])
         
         with col2:
-            if st.button("🔍 حلل الشبكة", key="analyze_btn"):
+            if st.button("🧮 احسب التكاليف", key="calc_btn"):
+                with st.spinner("جاري الحساب..."):
+                    selected_lines = [ln for ln in st.session_state.lines if ln.get("selected", True)]
+                    
+                    if selected_lines:
+                        all_items = {}
+                        per_line_result = []
+                        
+                        for line in selected_lines:
+                            cost_data = calculate_line_cost(line)
+                            per_line_result.append({"line": line, "cost_data": cost_data})
+                            
+                            for item in cost_data["items"]:
+                                key = item["البند"]
+                                if key not in all_items:
+                                    all_items[key] = {"الكمية": 0, "الإجمالي": 0, "الوحدة": item["الوحدة"], "السعر": item["السعر"]}
+                                all_items[key]["الكمية"] += item["الكمية"]
+                                all_items[key]["الإجمالي"] += item["الإجمالي"]
+                        
+                        total_cost = sum(item["الإجمالي"] for item in all_items.values())
+                        total_manholes = sum(item["cost_data"]["num_manholes"] for item in per_line_result)
+                        total_traps = sum(item["cost_data"]["num_traps"] for item in per_line_result)
+                        
+                        st.session_state.cost_result = {
+                            "per_line": per_line_result,
+                            "all_items": all_items,
+                            "total_cost": total_cost,
+                            "total_manholes": total_manholes,
+                            "total_traps": total_traps,
+                        }
+                        
+                        st.success("✅ تم الحساب بنجاح!")
+        
+        with col1:
+            st.markdown("")
+        
+        if st.session_state.cost_result:
+            result = st.session_state.cost_result
+            
+            # ملخص سريع
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.markdown(f"""
+                <div class="metric-card">
+                    <div class="metric-value">{len(result['per_line'])}</div>
+                    <div class="metric-label">الخطوط</div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col2:
+                st.markdown(f"""
+                <div class="metric-card">
+                    <div class="metric-value">{result['total_manholes']}</div>
+                    <div class="metric-label">المناهل</div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col3:
+                st.markdown(f"""
+                <div class="metric-card">
+                    <div class="metric-value">{result['total_traps']}</div>
+                    <div class="metric-label">المصائد</div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col4:
+                st.markdown(f"""
+                <div class="metric-card">
+                    <div class="metric-value">{result['total_cost']/1e6:.2f}M</div>
+                    <div class="metric-label">التكلفة (ريال)</div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            st.markdown("---")
+            
+            # التفاصيل
+            tab1, tab2, tab3 = st.tabs(["📋 الكميات المجمعة", "🔍 تفاصيل كل خط", "📈 رسم بياني"])
+            
+            with tab1:
+                st.markdown("### جدول الكميات والتكاليف")
+                
+                items_list = []
+                for item_name, item_data in result["all_items"].items():
+                    avg_price = item_data["الإجمالي"] / item_data["الكمية"] if item_data["الكمية"] > 0 else 0
+                    items_list.append({
+                        "البند": item_name,
+                        "الكمية": f"{item_data['الكمية']:,.2f}",
+                        "الوحدة": item_data["الوحدة"],
+                        "السعر": f"{avg_price:,.0f}",
+                        "الإجمالي": f"{item_data['الإجمالي']:,.0f}"
+                    })
+                
+                st.dataframe(pd.DataFrame(items_list), use_container_width=True, hide_index=True)
+                
+                st.markdown(f"### 💵 **التكلفة الإجمالية: {result['total_cost']:,.0f} ريال**")
+            
+            with tab2:
+                st.markdown("### تفاصيل كل خط")
+                
+                for per_line in result["per_line"]:
+                    line = per_line["line"]
+                    cost_data = per_line["cost_data"]
+                    
+                    with st.expander(f"📍 {line['name']} - {line['length']:,.0f} م", expanded=False):
+                        col1, col2, col3 = st.columns(3)
+                        
+                        with col1:
+                            st.metric("القطر", f"{line.get('diameter', 600)} ملم")
+                        with col2:
+                            st.metric("المناهل", cost_data["num_manholes"])
+                        with col3:
+                            st.metric("المصائد", cost_data["num_traps"])
+                        
+                        st.markdown("**البنود:**")
+                        
+                        items_df = pd.DataFrame(cost_data["items"])
+                        st.dataframe(items_df, use_container_width=True, hide_index=True)
+                        
+                        st.markdown(f"**المجموع: {cost_data['total']:,.0f} ريال**")
+            
+            with tab3:
+                st.markdown("### رسم بياني للتكاليف")
+                
+                fig, ax = plt.subplots(figsize=(12, 6), facecolor='white')
+                
+                items_names = list(result["all_items"].keys())
+                items_costs = [result["all_items"][name]["الإجمالي"] for name in items_names]
+                
+                colors = ['#1a5fa8', '#0a2a5e', '#17a2b8', '#28a745', '#ffc107']
+                ax.bar(range(len(items_names)), items_costs, color=colors[:len(items_names)])
+                ax.set_xticks(range(len(items_names)))
+                ax.set_xticklabels(items_names, rotation=45, ha='right')
+                ax.set_ylabel('التكلفة (ريال)', fontsize=11, fontweight='bold')
+                ax.set_title('توزيع التكاليف حسب البند', fontsize=13, fontweight='bold')
+                ax.grid(axis='y', alpha=0.3)
+                
+                for i, cost in enumerate(items_costs):
+                    ax.text(i, cost, f'{cost:,.0f}', ha='center', va='bottom', fontweight='bold')
+                
+                st.pyplot(fig, use_container_width=True)
+
+# 4. تحليل الشبكة
+elif st.session_state.current_section == "تحليل":
+    st.markdown("<div class='section-title'>🌐 تحليل الشبكة</div>", unsafe_allow_html=True)
+    
+    if not st.session_state.lines:
+        st.warning("⚠️ أضف خطوطاً أولاً")
+    else:
+        col1, col2 = st.columns([3, 1])
+        
+        with col2:
+            if st.button("🔍 حلل", key="analyze_btn"):
                 with st.spinner("جاري التحليل..."):
                     st.session_state.analyzer = AdvancedNetworkAnalyzer(st.session_state.lines)
-                    st.success("✅ تم التحليل بنجاح!")
+                    st.success("✅ تم!")
         
         with col1:
             st.markdown("")
@@ -673,20 +833,18 @@ elif st.session_state.current_section == "تحليل":
                 
                 st.markdown("---")
                 
-                # المناهل الحرجة
-                with st.expander("🔴 المناهل الحرجة (Critical Nodes)", expanded=True):
+                with st.expander("🔴 المناهل الحرجة", expanded=True):
                     critical = analyzer.get_critical_nodes()
                     
                     if critical:
                         critical_df = pd.DataFrame([
-                            {"#": i+1, "المنهل": f"{node[0]:.4f}, {node[1]:.4f}", "الأهمية": f"{score:.4f}"}
+                            {"#": i+1, "الموقع": f"{node[0]:.5f}, {node[1]:.5f}", "الأهمية": f"{score:.4f}"}
                             for i, (node, score) in enumerate(critical)
                         ])
                         st.dataframe(critical_df, use_container_width=True, hide_index=True)
                     else:
-                        st.info("لا توجد نقاط حرجة محددة")
+                        st.info("لا توجد نقاط حرجة")
                 
-                # رسم الشبكة
                 with st.expander("📈 رسم الشبكة", expanded=True):
                     fig, ax = plt.subplots(figsize=(12, 8), facecolor='white')
                     
@@ -699,39 +857,23 @@ elif st.session_state.current_section == "تحليل":
                     
                     st.pyplot(fig, use_container_width=True)
 
-# 4. تحليل الـ Flow
-elif st.session_state.current_section == "flow":
-    st.markdown("<div class='section-title'>🔀 تحليل الـ Flow</div>", unsafe_allow_html=True)
-    
-    st.info("💡 تحليل اتجاه الجريان في الشبكة (قريباً)")
-
-# 5. القنوات الصندوقية
-elif st.session_state.current_section == "قنوات":
-    st.markdown("<div class='section-title'>📦 القنوات الصندوقية</div>", unsafe_allow_html=True)
-    
-    st.info("💡 حساب السعة الهيدروليكية للقنوات الصندوقية (قريباً)")
-
-# 6. تقييم المخاطر
-elif st.session_state.current_section == "مخاطر":
-    st.markdown("<div class='section-title'>⚠️ تقييم المخاطر</div>", unsafe_allow_html=True)
-    
-    st.info("💡 تقييم مخاطر الشبكة (قريباً)")
-
-# 7. التقارير
+# 5. التقارير
 elif st.session_state.current_section == "تقارير":
     st.markdown("<div class='section-title'>📊 التقارير</div>", unsafe_allow_html=True)
     
-    if st.session_state.analyzer:
-        stats = st.session_state.analyzer.get_stats()
+    if not st.session_state.cost_result:
+        st.warning("⚠️ احسب التكاليف أولاً")
+    else:
+        result = st.session_state.cost_result
         
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         
+        # CSV
         with col1:
-            csv_content = "المؤشر,القيمة\n"
-            csv_content += f"عدد المناهل,{stats['num_nodes']}\n"
-            csv_content += f"عدد الأنابيب,{stats['num_edges']}\n"
-            csv_content += f"الطول الإجمالي,{stats['total_length']:.0f}\n"
-            csv_content += f"الكثافة,{stats['density']:.4f}\n"
+            csv_content = "البند,الكمية,الوحدة,السعر,الإجمالي\n"
+            for name, data in result["all_items"].items():
+                avg_price = data["الإجمالي"] / data["الكمية"] if data["الكمية"] > 0 else 0
+                csv_content += f"{name},{data['الكمية']:.2f},{data['الوحدة']},{avg_price:.0f},{data['الإجمالي']:.0f}\n"
             
             st.download_button(
                 label="📥 تحميل CSV",
@@ -741,13 +883,14 @@ elif st.session_state.current_section == "تقارير":
                 use_container_width=True
             )
         
+        # TXT
         with col2:
-            txt_content = "تقرير تحليل الشبكة\n"
-            txt_content += f"التاريخ: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-            txt_content += f"عدد المناهل: {stats['num_nodes']}\n"
-            txt_content += f"عدد الأنابيب: {stats['num_edges']}\n"
-            txt_content += f"الطول الإجمالي: {stats['total_length']/1000:.2f} كم\n"
-            txt_content += f"الكثافة: {stats['density']:.4f}\n"
+            txt_content = "تقرير تحليل شبكة السيول\n"
+            txt_content += f"التاريخ: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
+            txt_content += f"عدد الخطوط: {len(result['per_line'])}\n"
+            txt_content += f"المناهل: {result['total_manholes']}\n"
+            txt_content += f"المصائد: {result['total_traps']}\n"
+            txt_content += f"التكلفة الإجمالية: {result['total_cost']:,.0f} ريال\n"
             
             st.download_button(
                 label="📥 تحميل TXT",
@@ -756,8 +899,37 @@ elif st.session_state.current_section == "تقارير":
                 mime="text/plain",
                 use_container_width=True
             )
-    else:
-        st.warning("⚠️ قم بتحليل الشبكة أولاً")
+        
+        # JSON
+        with col3:
+            json_content = json.dumps({
+                "lines": len(result['per_line']),
+                "total_manholes": result['total_manholes'],
+                "total_traps": result['total_traps'],
+                "total_cost": result['total_cost'],
+                "items": {k: {"qty": v["الكمية"], "total": v["الإجمالي"]} for k, v in result["all_items"].items()}
+            }, ensure_ascii=False, indent=2)
+            
+            st.download_button(
+                label="📥 تحميل JSON",
+                data=json_content,
+                file_name=f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                mime="application/json",
+                use_container_width=True
+            )
+        
+        st.markdown("---")
+        
+        st.markdown("### 📋 معاينة التقرير")
+        
+        with st.expander("ملخص المشروع", expanded=True):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write(f"**عدد الخطوط:** {len(result['per_line'])}")
+                st.write(f"**المناهل الكلية:** {result['total_manholes']}")
+                st.write(f"**المصائد الكلية:** {result['total_traps']}")
+            with col2:
+                st.write(f"**التكلفة الإجمالية:** {result['total_cost']:,.0f} ريال")
 
 # ═════════════════════════════════════════════════════════════════════════════════
 # Footer
@@ -766,7 +938,7 @@ elif st.session_state.current_section == "تقارير":
 st.markdown("---")
 st.markdown("""
 <div style="text-align: center; color: #999; font-size: 0.85rem; padding: 20px;">
-    <p>🌊 محلل شبكات السيول | النسخة 4.0 | تطبيق احترافي محسّن</p>
+    <p>🌊 محلل شبكات السيول | النسخة 4.0 | تطبيق احترافي</p>
     <p>آخر تحديث: يونيو 2025</p>
 </div>
 """, unsafe_allow_html=True)
