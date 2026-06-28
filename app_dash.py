@@ -7,17 +7,27 @@ import networkx as nx
 import matplotlib.pyplot as plt
 import pandas as pd
 import io
+import folium
+from streamlit_folium import st_folium
+from folium.plugins import Draw
 
 try:
-    import folium
-    from streamlit_folium import st_folium
-    from folium.plugins import Draw
-    FOLIUM_AVAILABLE = True
+    import geopandas as gpd
+    GEOPANDAS_AVAILABLE = True
 except:
-    FOLIUM_AVAILABLE = False
+    GEOPANDAS_AVAILABLE = False
 
-# إعدادات الصفحة
-st.set_page_config(page_title="محلل شبكات السيول", page_icon="🌊", layout="wide", initial_sidebar_state="expanded")
+# ═════════════════════════════════════════════════════════════════════════════════
+# إعدادات الصفحة - إزالة الأزرار الخطيرة
+# ═════════════════════════════════════════════════════════════════════════════════
+
+st.set_page_config(
+    page_title="Drainage Network Analyzer",
+    page_icon="🌊",
+    layout="wide",
+    initial_sidebar_state="expanded",
+    menu_items={"About": None}  # إزالة الأزرار الخطيرة
+)
 
 CUSTOM_CSS = """
 <style>
@@ -37,13 +47,19 @@ html, body, [class*="css"] { direction: rtl; text-align: right; }
 
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
+# ═════════════════════════════════════════════════════════════════════════════════
 # الثوابت
+# ═════════════════════════════════════════════════════════════════════════════════
+
 PIPE_PRICES = {
     400: 454, 500: 619, 600: 725, 700: 906, 800: 1045,
     900: 1225, 1000: 1440, 1100: 1600, 1200: 1812, 1300: 1920, 1400: 2132,
 }
 
-# دوال
+# ═════════════════════════════════════════════════════════════════════════════════
+# دوال مساعدة
+# ═════════════════════════════════════════════════════════════════════════════════
+
 def haversine_distance(coord1, coord2):
     lat1, lon1 = coord1[0], coord1[1]
     lat2, lon2 = coord2[0], coord2[1]
@@ -56,6 +72,12 @@ def haversine_distance(coord1, coord2):
 
 def calculate_traps(length):
     return max(1, round(length / 35))
+
+def get_bounds(coords):
+    """حساب الحدود لتركيز الخريطة على الخطوط"""
+    lats = [c[0] for c in coords]
+    lons = [c[1] for c in coords]
+    return [[min(lats), min(lons)], [max(lats), max(lons)]]
 
 class NetworkAnalyzer:
     def __init__(self, lines):
@@ -77,7 +99,6 @@ class NetworkAnalyzer:
                 start = tuple(coords[i][:2])
                 end = tuple(coords[i + 1][:2])
                 
-                # إضافة العقد
                 if start not in self.nodes_coords:
                     self.nodes_coords[start] = node_id
                     self.G.add_node(node_id)
@@ -88,14 +109,12 @@ class NetworkAnalyzer:
                     self.G.add_node(node_id)
                     node_id += 1
                 
-                # إضافة الحافة (الفرع)
                 distance = haversine_distance(coords[i], coords[i+1])
                 start_node = self.nodes_coords[start]
                 end_node = self.nodes_coords[end]
                 
                 self.G.add_edge(start_node, end_node, distance=distance)
                 
-                # حفظ معلومات الفرع
                 self.edges_list.append({
                     "id": len(self.edges_list),
                     "start_coord": start,
@@ -115,38 +134,49 @@ class NetworkAnalyzer:
             "total_length": sum(e["distance"] for e in self.edges_list),
         }
 
+# ═════════════════════════════════════════════════════════════════════════════════
 # Session State
+# ═════════════════════════════════════════════════════════════════════════════════
+
 if "lines" not in st.session_state:
     st.session_state.lines = []
 if "analyzer" not in st.session_state:
     st.session_state.analyzer = None
 if "cost_result" not in st.session_state:
     st.session_state.cost_result = None
+if "map_bounds" not in st.session_state:
+    st.session_state.map_bounds = None
 
+# ═════════════════════════════════════════════════════════════════════════════════
 # Header
+# ═════════════════════════════════════════════════════════════════════════════════
+
 st.markdown("""
 <div class="header">
-    <h1>🌊 محلل شبكات السيول</h1>
-    <p>التحليل أولاً ← إدارة البيانات ← الحساب ← التقرير PDF</p>
+    <h1>🌊 Drainage Network Analyzer</h1>
+    <p>Complete solution for drainage system analysis and cost calculation</p>
 </div>
 """, unsafe_allow_html=True)
 
+# ═════════════════════════════════════════════════════════════════════════════════
 # الأقسام
-tabs = st.tabs(["🏠 البداية", "🗺️ الرسم", "🌐 التحليل", "⚙️ إدارة الفروع", "💰 الحساب", "🗺️ الخريطة", "📊 التقرير"])
+# ═════════════════════════════════════════════════════════════════════════════════
+
+tabs = st.tabs(["🏠 Home", "🗺️ Draw & Import", "🌐 Analyze", "⚙️ Configure & Calculate", "🗺️ Report"])
 
 # ═════════════════════════════════════════════════════════════════════════════════
-# التبويب 1: البداية
+# التبويب 1: الرئيسية
 # ═════════════════════════════════════════════════════════════════════════════════
 
 with tabs[0]:
-    st.markdown("<h2 class='title'>🎯 خطوات الاستخدام</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 class='title'>Welcome to Drainage Network Analyzer</h2>", unsafe_allow_html=True)
     
     col1, col2, col3 = st.columns(3)
     with col1:
         st.markdown("""
         <div class="card">
         <div style="font-size: 2rem; margin-bottom: 10px;">1️⃣</div>
-        <div class="card-label"><strong>الرسم</strong><br>ارسم الخطوط على الخريطة</div>
+        <div class="card-label"><strong>Draw</strong><br>Draw or import network</div>
         </div>
         """, unsafe_allow_html=True)
     
@@ -154,7 +184,7 @@ with tabs[0]:
         st.markdown("""
         <div class="card">
         <div style="font-size: 2rem; margin-bottom: 10px;">2️⃣</div>
-        <div class="card-label"><strong>التحليل</strong><br>حلل الشبكة الفعلية</div>
+        <div class="card-label"><strong>Analyze</strong><br>Analyze the network</div>
         </div>
         """, unsafe_allow_html=True)
     
@@ -162,43 +192,21 @@ with tabs[0]:
         st.markdown("""
         <div class="card">
         <div style="font-size: 2rem; margin-bottom: 10px;">3️⃣</div>
-        <div class="card-label"><strong>البيانات</strong><br>أدخل القطر والعمق لكل فرع</div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.markdown("""
-        <div class="card">
-        <div style="font-size: 2rem; margin-bottom: 10px;">4️⃣</div>
-        <div class="card-label"><strong>الحساب</strong><br>احسب التكاليف والكميات</div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col2:
-        st.markdown("""
-        <div class="card">
-        <div style="font-size: 2rem; margin-bottom: 10px;">5️⃣</div>
-        <div class="card-label"><strong>الخريطة</strong><br>عرض خريطة OpenStreetMap</div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col3:
-        st.markdown("""
-        <div class="card">
-        <div style="font-size: 2rem; margin-bottom: 10px;">6️⃣</div>
-        <div class="card-label"><strong>التقرير</strong><br>احمل PDF مع الخريطة</div>
+        <div class="card-label"><strong>Configure</strong><br>Set parameters & calculate</div>
         </div>
         """, unsafe_allow_html=True)
 
 # ═════════════════════════════════════════════════════════════════════════════════
-# التبويب 2: الرسم
+# التبويب 2: الرسم والاستيراف
 # ═════════════════════════════════════════════════════════════════════════════════
 
 with tabs[1]:
-    st.markdown("<h2 class='title'>🗺️ الرسم على الخريطة</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 class='title'>Draw & Import Network</h2>", unsafe_allow_html=True)
     
-    if FOLIUM_AVAILABLE:
+    sub_tab1, sub_tab2, sub_tab3 = st.tabs(["🎨 Draw", "📤 GeoJSON", "📦 Shapefile"])
+    
+    # رسم
+    with sub_tab1:
         m = folium.Map(location=[24.7136, 46.6753], zoom_start=12, tiles="OpenStreetMap")
         
         for line in st.session_state.lines:
@@ -209,7 +217,7 @@ with tabs[1]:
         draw = Draw(export=True, position="topleft", draw_options={"polyline": True, "polygon": False, "rectangle": False})
         draw.add_to(m)
         
-        map_data = st_folium(m, width=None, height=500)
+        map_data = st_folium(m, width=None, height=600)
         
         if map_data and map_data.get("last_active_drawing"):
             drawing = map_data["last_active_drawing"]
@@ -220,33 +228,119 @@ with tabs[1]:
                     
                     new_line = {
                         "id": str(uuid.uuid4()),
-                        "name": f"خط {len(st.session_state.lines) + 1}",
+                        "name": f"Line {len(st.session_state.lines) + 1}",
                         "length": length,
                         "coords": coords,
                         "selected": True,
                     }
                     st.session_state.lines.append(new_line)
                     st.session_state.analyzer = None
-                    st.success(f"✅ تم إضافة {new_line['name']}")
+                    st.session_state.map_bounds = get_bounds(coords)
+                    st.success(f"✅ Line added!")
                     st.rerun()
+    
+    # GeoJSON
+    with sub_tab2:
+        uploaded_geojson = st.file_uploader("Upload GeoJSON file", type=["geojson", "json"])
+        
+        if uploaded_geojson:
+            try:
+                geojson_data = json.load(uploaded_geojson)
+                features = geojson_data.get("features", [])
+                
+                for idx, feature in enumerate(features):
+                    geom = feature.get("geometry", {})
+                    if geom.get("type") == "LineString":
+                        coords = [(lat, lon) for lon, lat in geom.get("coordinates", [])]
+                        if len(coords) >= 2:
+                            length = sum(haversine_distance(coords[i], coords[i+1]) for i in range(len(coords)-1))
+                            
+                            new_line = {
+                                "id": str(uuid.uuid4()),
+                                "name": feature.get("properties", {}).get("name", f"Line {idx+1}"),
+                                "length": length,
+                                "coords": coords,
+                                "selected": True,
+                            }
+                            st.session_state.lines.append(new_line)
+                
+                st.session_state.analyzer = None
+                st.success(f"✅ {len(features)} lines imported!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ Error: {e}")
+    
+    # Shapefile
+    with sub_tab3:
+        if GEOPANDAS_AVAILABLE:
+            uploaded_shp = st.file_uploader("Upload Shapefile (zip with .shp, .shx, .dbf)", type=["zip"])
+            
+            if uploaded_shp:
+                try:
+                    import tempfile
+                    import zipfile
+                    
+                    with tempfile.TemporaryDirectory() as tmpdir:
+                        with zipfile.ZipFile(uploaded_shp, 'r') as zip_ref:
+                            zip_ref.extractall(tmpdir)
+                        
+                        # البحث عن ملف shp
+                        import os
+                        shp_file = None
+                        for file in os.listdir(tmpdir):
+                            if file.endswith('.shp'):
+                                shp_file = os.path.join(tmpdir, file)
+                                break
+                        
+                        if shp_file:
+                            gdf = gpd.read_file(shp_file)
+                            
+                            # تحويل إلى WGS84 إذا لم تكن بها
+                            if gdf.crs is not None and gdf.crs != 'EPSG:4326':
+                                gdf = gdf.to_crs('EPSG:4326')
+                            
+                            for idx, row in gdf.iterrows():
+                                if row.geometry.geom_type == 'LineString':
+                                    coords = [(lat, lon) for lon, lat in row.geometry.coords]
+                                    if len(coords) >= 2:
+                                        length = sum(haversine_distance(coords[i], coords[i+1]) for i in range(len(coords)-1))
+                                        
+                                        new_line = {
+                                            "id": str(uuid.uuid4()),
+                                            "name": f"Line {idx+1}",
+                                            "length": length,
+                                            "coords": coords,
+                                            "selected": True,
+                                        }
+                                        st.session_state.lines.append(new_line)
+                            
+                            st.session_state.analyzer = None
+                            st.success(f"✅ {len(gdf)} lines imported!")
+                            st.rerun()
+                        else:
+                            st.error("❌ No .shp file found in zip")
+                except Exception as e:
+                    st.error(f"❌ Error: {e}")
+        else:
+            st.warning("⚠️ GeoPandas not installed. Use: pip install geopandas")
 
 # ═════════════════════════════════════════════════════════════════════════════════
 # التبويب 3: التحليل
 # ═════════════════════════════════════════════════════════════════════════════════
 
 with tabs[2]:
-    st.markdown("<h2 class='title'>🌐 تحليل الشبكة</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 class='title'>Network Analysis</h2>", unsafe_allow_html=True)
     
     if not st.session_state.lines:
-        st.warning("⚠️ أضف خطوطاً أولاً")
+        st.warning("⚠️ Add lines first")
     else:
         col1, col2 = st.columns([4, 1])
         
         with col2:
-            if st.button("🔍 حلل الشبكة", use_container_width=True):
-                with st.spinner("جاري التحليل..."):
+            if st.button("🔍 Analyze Network", use_container_width=True):
+                with st.spinner("Analyzing..."):
                     st.session_state.analyzer = NetworkAnalyzer(st.session_state.lines)
-                    st.success("✅ تم!")
+                    st.success("✅ Done!")
         
         if st.session_state.analyzer:
             stats = st.session_state.analyzer.get_stats()
@@ -257,7 +351,7 @@ with tabs[2]:
                 st.markdown(f"""
                 <div class="card">
                 <div class="card-value">{stats['num_nodes']}</div>
-                <div class="card-label">🔴 المناهل</div>
+                <div class="card-label">Nodes (Manholes)</div>
                 </div>
                 """, unsafe_allow_html=True)
             
@@ -265,7 +359,7 @@ with tabs[2]:
                 st.markdown(f"""
                 <div class="card">
                 <div class="card-value">{stats['num_edges']}</div>
-                <div class="card-label">🔗 الفروع</div>
+                <div class="card-label">Branches (Pipes)</div>
                 </div>
                 """, unsafe_allow_html=True)
             
@@ -273,26 +367,23 @@ with tabs[2]:
                 st.markdown(f"""
                 <div class="card">
                 <div class="card-value">{stats['total_length']/1000:.1f}</div>
-                <div class="card-label">📏 الطول (كم)</div>
+                <div class="card-label">Total Length (km)</div>
                 </div>
                 """, unsafe_allow_html=True)
-            
-            st.success(f"✅ عدد المناهل: {stats['num_nodes']} | الفروع: {stats['num_edges']}")
 
 # ═════════════════════════════════════════════════════════════════════════════════
-# التبويب 4: إدارة الفروع
+# التبويب 4: الإعدادات والحساب (مدمج)
 # ═════════════════════════════════════════════════════════════════════════════════
 
 with tabs[3]:
-    st.markdown("<h2 class='title'>⚙️ إدارة بيانات الفروع</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 class='title'>Configure & Calculate Costs</h2>", unsafe_allow_html=True)
     
     if not st.session_state.analyzer:
-        st.warning("⚠️ حلل الشبكة أولاً")
+        st.warning("⚠️ Analyze the network first")
     else:
-        st.info("📌 أدخل القطر والعمق لكل فرع")
-        
-        # جدول الفروع
-        edges_data = []
+        # إدارة الفروع
+        st.markdown("### Configure Each Branch")
+        st.info("📌 Set diameter and depth for each branch")
         
         for idx, edge in enumerate(st.session_state.analyzer.edges_list):
             col1, col2, col3, col4, col5 = st.columns([2, 2, 1.5, 1.5, 2])
@@ -301,11 +392,11 @@ with tabs[3]:
                 st.write(f"**{idx+1}. {edge['line_name']}**")
             
             with col2:
-                st.write(f"الطول: {edge['distance']/1000:.3f} كم")
+                st.write(f"Length: {edge['distance']/1000:.3f} km")
             
             with col3:
                 diameter = st.selectbox(
-                    "القطر",
+                    "Diameter",
                     sorted(PIPE_PRICES.keys()),
                     index=list(PIPE_PRICES.keys()).index(600),
                     key=f"d_{idx}",
@@ -314,7 +405,7 @@ with tabs[3]:
             
             with col4:
                 depth = st.number_input(
-                    "العمق",
+                    "Depth",
                     min_value=0.5,
                     value=1.5,
                     step=0.1,
@@ -322,27 +413,17 @@ with tabs[3]:
                     label_visibility="collapsed"
                 )
             
-            with col5:
-                st.write(f"💾 تم الحفظ")
-            
             st.session_state.analyzer.edges_list[idx]["diameter"] = diameter
             st.session_state.analyzer.edges_list[idx]["depth"] = depth
-
-# ═════════════════════════════════════════════════════════════════════════════════
-# التبويب 5: الحساب
-# ═════════════════════════════════════════════════════════════════════════════════
-
-with tabs[4]:
-    st.markdown("<h2 class='title'>💰 حساب التكاليف</h2>", unsafe_allow_html=True)
-    
-    if not st.session_state.analyzer:
-        st.warning("⚠️ أدخل البيانات أولاً")
-    else:
+        
+        st.markdown("---")
+        
+        # زر الحساب
         col1, col2 = st.columns([4, 1])
         
         with col2:
-            if st.button("🧮 احسب التكاليف", use_container_width=True):
-                with st.spinner("جاري الحساب..."):
+            if st.button("🧮 Calculate Costs", use_container_width=True):
+                with st.spinner("Calculating..."):
                     analyzer = st.session_state.analyzer
                     stats = analyzer.get_stats()
                     
@@ -355,7 +436,6 @@ with tabs[4]:
                         depth = edge["depth"]
                         length = edge["distance"]
                         
-                        # حصة هذا الفرع من المناهل
                         share = length / total_length if total_length > 0 else 0
                         num_nodes = max(1, round(stats['num_nodes'] * share))
                         num_traps = calculate_traps(length)
@@ -363,14 +443,14 @@ with tabs[4]:
                         price_per_meter = PIPE_PRICES.get(diameter, 725)
                         
                         items = [
-                            {"البند": "أنابيب صرف", "الكمية": length, "الوحدة": "م", "السعر": price_per_meter, "الإجمالي": length * price_per_meter},
-                            {"البند": "حفر الخندق", "الكمية": length, "الوحدة": "م", "السعر": 50, "الإجمالي": length * 50},
-                            {"البند": "مناهل", "الكمية": num_nodes, "الوحدة": "عدد", "السعر": 3000, "الإجمالي": num_nodes * 3000},
-                            {"البند": "مصائد", "الكمية": num_traps, "الوحدة": "عدد", "السعر": 2000, "الإجمالي": num_traps * 2000},
-                            {"البند": "ردم وتسوية", "الكمية": length * depth, "الوحدة": "م³", "السعر": 30, "الإجمالي": length * depth * 30},
+                            {"Item": "Pipes", "Quantity": length, "Unit": "m", "Price": price_per_meter, "Total": length * price_per_meter},
+                            {"Item": "Excavation", "Quantity": length, "Unit": "m", "Price": 50, "Total": length * 50},
+                            {"Item": "Manholes", "Quantity": num_nodes, "Unit": "pcs", "Price": 3000, "Total": num_nodes * 3000},
+                            {"Item": "Traps", "Quantity": num_traps, "Unit": "pcs", "Price": 2000, "Total": num_traps * 2000},
+                            {"Item": "Backfill", "Quantity": length * depth, "Unit": "m³", "Price": 30, "Total": length * depth * 30},
                         ]
                         
-                        total = sum(item["الإجمالي"] for item in items)
+                        total = sum(item["Total"] for item in items)
                         
                         per_edge_result.append({
                             "line_name": edge["line_name"],
@@ -384,13 +464,13 @@ with tabs[4]:
                         })
                         
                         for item in items:
-                            key = item["البند"]
+                            key = item["Item"]
                             if key not in all_items:
-                                all_items[key] = {"الكمية": 0, "الإجمالي": 0, "الوحدة": item["الوحدة"]}
-                            all_items[key]["الكمية"] += item["الكمية"]
-                            all_items[key]["الإجمالي"] += item["الإجمالي"]
+                                all_items[key] = {"Quantity": 0, "Total": 0, "Unit": item["Unit"]}
+                            all_items[key]["Quantity"] += item["Quantity"]
+                            all_items[key]["Total"] += item["Total"]
                     
-                    total_cost = sum(item["الإجمالي"] for item in all_items.values())
+                    total_cost = sum(item["Total"] for item in all_items.values())
                     
                     st.session_state.cost_result = {
                         "per_edge": per_edge_result,
@@ -399,7 +479,7 @@ with tabs[4]:
                         "stats": stats,
                     }
                     
-                    st.success("✅ تم!")
+                    st.success("✅ Calculated!")
         
         if st.session_state.cost_result:
             result = st.session_state.cost_result
@@ -410,7 +490,7 @@ with tabs[4]:
                 st.markdown(f"""
                 <div class="card">
                 <div class="card-value">{sum(e['num_nodes'] for e in result['per_edge'])}</div>
-                <div class="card-label">المناهل</div>
+                <div class="card-label">Manholes</div>
                 </div>
                 """, unsafe_allow_html=True)
             
@@ -418,7 +498,7 @@ with tabs[4]:
                 st.markdown(f"""
                 <div class="card">
                 <div class="card-value">{sum(e['num_traps'] for e in result['per_edge'])}</div>
-                <div class="card-label">المصائد</div>
+                <div class="card-label">Traps</div>
                 </div>
                 """, unsafe_allow_html=True)
             
@@ -426,7 +506,7 @@ with tabs[4]:
                 st.markdown(f"""
                 <div class="card">
                 <div class="card-value">{len(result['per_edge'])}</div>
-                <div class="card-label">الفروع</div>
+                <div class="card-label">Branches</div>
                 </div>
                 """, unsafe_allow_html=True)
             
@@ -434,7 +514,7 @@ with tabs[4]:
                 st.markdown(f"""
                 <div class="card">
                 <div class="card-value">{result['total_cost']/1e6:.2f}M</div>
-                <div class="card-label">التكلفة (ريال)</div>
+                <div class="card-label">Total Cost (SAR)</div>
                 </div>
                 """, unsafe_allow_html=True)
             
@@ -444,175 +524,207 @@ with tabs[4]:
             items_list = []
             for item_name, item_data in result["all_items"].items():
                 items_list.append({
-                    "البند": item_name,
-                    "الكمية": f"{item_data['الكمية']:,.2f}",
-                    "الوحدة": item_data["الوحدة"],
-                    "الإجمالي": f"{item_data['الإجمالي']:,.0f}"
+                    "Item": item_name,
+                    "Quantity": f"{item_data['Quantity']:,.2f}",
+                    "Unit": item_data["Unit"],
+                    "Total (SAR)": f"{item_data['Total']:,.0f}"
                 })
             
             st.dataframe(pd.DataFrame(items_list), use_container_width=True, hide_index=True)
 
 # ═════════════════════════════════════════════════════════════════════════════════
-# التبويب 6: الخريطة
+# التبويب 5: التقرير والخريطة (مدمج)
 # ═════════════════════════════════════════════════════════════════════════════════
 
-with tabs[5]:
-    st.markdown("<h2 class='title'>🗺️ خريطة الشبكة (OpenStreetMap)</h2>", unsafe_allow_html=True)
+with tabs[4]:
+    st.markdown("<h2 class='title'>Map & Report</h2>", unsafe_allow_html=True)
     
     if not st.session_state.analyzer:
-        st.warning("⚠️ حلل الشبكة أولاً")
+        st.warning("⚠️ Analyze the network first")
     else:
-        analyzer = st.session_state.analyzer
+        sub_tab1, sub_tab2 = st.tabs(["🗺️ Map View", "📊 PDF Report"])
         
-        map_osm = folium.Map(location=[24.7136, 46.6753], zoom_start=12, tiles="OpenStreetMap")
+        # الخريطة
+        with sub_tab1:
+            st.markdown("### Interactive Map (OpenStreetMap)")
+            
+            analyzer = st.session_state.analyzer
+            
+            # حساب الحدود من جميع الخطوط
+            all_coords = []
+            for line in st.session_state.lines:
+                all_coords.extend(line.get("coords", []))
+            
+            if all_coords:
+                bounds = get_bounds(all_coords)
+                center = [
+                    (bounds[0][0] + bounds[1][0]) / 2,
+                    (bounds[0][1] + bounds[1][1]) / 2
+                ]
+            else:
+                center = [24.7136, 46.6753]
+            
+            map_osm = folium.Map(location=center, zoom_start=14, tiles="OpenStreetMap")
+            
+            # رسم الخطوط
+            for line in st.session_state.lines:
+                coords = line.get("coords", [])
+                if coords:
+                    folium.PolyLine(coords, color="blue", weight=3, opacity=0.8, popup=line['name']).add_to(map_osm)
+            
+            # رسم المناهل
+            for node_id in analyzer.G.nodes():
+                for coord, nid in analyzer.nodes_coords.items():
+                    if nid == node_id:
+                        folium.CircleMarker(
+                            location=coord,
+                            radius=6,
+                            popup="Manhole",
+                            color="red",
+                            fill=True,
+                            fillColor="red",
+                            weight=2
+                        ).add_to(map_osm)
+            
+            # تركيز على الخطوط
+            if all_coords:
+                map_osm.fit_bounds(bounds)
+            
+            st_folium(map_osm, width=None, height=700)
         
-        # رسم الخطوط
-        for line in st.session_state.lines:
-            coords = line.get("coords", [])
-            if coords:
-                folium.PolyLine(coords, color="blue", weight=3, opacity=0.8, popup=line['name']).add_to(map_osm)
-        
-        # رسم المناهل
-        for node_id in analyzer.G.nodes():
-            for coord, nid in analyzer.nodes_coords.items():
-                if nid == node_id:
-                    folium.CircleMarker(
-                        location=coord,
-                        radius=6,
-                        popup="منهل",
-                        color="red",
-                        fill=True,
-                        fillColor="red",
-                        weight=2
-                    ).add_to(map_osm)
-        
-        st_folium(map_osm, width=None, height=600)
-
-# ═════════════════════════════════════════════════════════════════════════════════
-# التبويب 7: التقرير PDF
-# ═════════════════════════════════════════════════════════════════════════════════
-
-with tabs[6]:
-    st.markdown("<h2 class='title'>📊 تقرير PDF مع الخريطة</h2>", unsafe_allow_html=True)
-    
-    if not st.session_state.cost_result:
-        st.warning("⚠️ احسب التكاليف أولاً")
-    else:
-        if st.button("📥 تحميل التقرير PDF", use_container_width=True):
-            with st.spinner("جاري توليد التقرير..."):
-                try:
-                    from reportlab.lib.pagesizes import landscape, A4
-                    from reportlab.lib import colors
-                    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
-                    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-                    from reportlab.lib.enums import TA_CENTER, TA_RIGHT
-                    from reportlab.lib.units import mm
-                    
-                    result = st.session_state.cost_result
-                    
-                    # إنشاء خريطة
-                    map_osm = folium.Map(location=[24.7136, 46.6753], zoom_start=12, tiles="OpenStreetMap")
-                    
-                    for line in st.session_state.lines:
-                        coords = line.get("coords", [])
-                        if coords:
-                            folium.PolyLine(coords, color="blue", weight=3).add_to(map_osm)
-                    
-                    map_file = "/tmp/map.html"
-                    map_osm.save(map_file)
-                    
-                    # إنشاء PDF
-                    pdf_buffer = io.BytesIO()
-                    doc = SimpleDocTemplate(pdf_buffer, pagesize=landscape(A4), rightMargin=20, leftMargin=20, topMargin=20, bottomMargin=20)
-                    
-                    elements = []
-                    styles = getSampleStyleSheet()
-                    
-                    # العنوان
-                    title = Paragraph("تقرير تحليل شبكة السيول", styles['Heading1'])
-                    elements.append(title)
-                    elements.append(Spacer(1, 12))
-                    
-                    # التاريخ
-                    date_text = Paragraph(f"التاريخ: {datetime.now().strftime('%Y-%m-%d %H:%M')}", styles['Normal'])
-                    elements.append(date_text)
-                    elements.append(Spacer(1, 12))
-                    
-                    # ملخص
-                    summary_data = [
-                        ["المؤشر", "القيمة"],
-                        ["المناهل", str(sum(e['num_nodes'] for e in result['per_edge']))],
-                        ["الفروع", str(len(result['per_edge']))],
-                        ["المصائد", str(sum(e['num_traps'] for e in result['per_edge']))],
-                        ["التكلفة الإجمالية (ريال)", f"{result['total_cost']:,.0f}"],
-                    ]
-                    
-                    summary_table = Table(summary_data, colWidths=[100*mm, 100*mm])
-                    summary_table.setStyle(TableStyle([
-                        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1a5fa8')),
-                        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                        ('GRID', (0, 0), (-1, -1), 1, colors.black)
-                    ]))
-                    
-                    elements.append(summary_table)
-                    elements.append(Spacer(1, 15))
-                    
-                    # جدول الكميات
-                    items_data = [["البند", "الكمية", "الوحدة", "الإجمالي (ريال)"]]
-                    for item_name, item_data in result["all_items"].items():
-                        items_data.append([
-                            item_name,
-                            f"{item_data['الكمية']:,.2f}",
-                            item_data["الوحدة"],
-                            f"{item_data['الإجمالي']:,.0f}"
-                        ])
-                    
-                    items_table = Table(items_data, colWidths=[70*mm, 60*mm, 50*mm, 70*mm])
-                    items_table.setStyle(TableStyle([
-                        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1a5fa8')),
-                        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                        ('GRID', (0, 0), (-1, -1), 1, colors.black)
-                    ]))
-                    
-                    elements.append(items_table)
-                    
-                    # بناء PDF
-                    doc.build(elements)
-                    
-                    pdf_buffer.seek(0)
-                    
-                    st.download_button(
-                        label="📥 تحميل PDF",
-                        data=pdf_buffer.getvalue(),
-                        file_name=f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
-                        mime="application/pdf",
-                        use_container_width=True
-                    )
-                    
-                    st.success("✅ تم إنشاء التقرير!")
-                    
-                except ImportError:
-                    st.warning("⚠️ مكتبة reportlab غير مثبتة. استخدم CSV بدلاً من ذلك")
-                    
-                    # بديل CSV
-                    csv_content = "البند,الكمية,الوحدة,الإجمالي\n"
-                    for item_name, item_data in result["all_items"].items():
-                        csv_content += f"{item_name},{item_data['الكمية']:.2f},{item_data['الوحدة']},{item_data['الإجمالي']:.0f}\n"
-                    
-                    st.download_button(
-                        label="📥 تحميل CSV",
-                        data=csv_content,
-                        file_name=f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                        mime="text/csv",
-                        use_container_width=True
-                    )
+        # التقرير PDF
+        with sub_tab2:
+            if not st.session_state.cost_result:
+                st.warning("⚠️ Calculate costs first")
+            else:
+                if st.button("📥 Download PDF Report", use_container_width=True):
+                    with st.spinner("Generating PDF..."):
+                        try:
+                            from reportlab.lib.pagesizes import landscape, A4
+                            from reportlab.lib import colors
+                            from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, Image
+                            from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+                            from reportlab.lib.enums import TA_CENTER, TA_RIGHT
+                            from reportlab.lib.units import mm
+                            
+                            result = st.session_state.cost_result
+                            
+                            # إنشاء خريطة PNG
+                            analyzer = st.session_state.analyzer
+                            all_coords = []
+                            for line in st.session_state.lines:
+                                all_coords.extend(line.get("coords", []))
+                            
+                            if all_coords:
+                                bounds = get_bounds(all_coords)
+                                center = [
+                                    (bounds[0][0] + bounds[1][0]) / 2,
+                                    (bounds[0][1] + bounds[1][1]) / 2
+                                ]
+                            else:
+                                center = [24.7136, 46.6753]
+                            
+                            map_osm = folium.Map(location=center, zoom_start=14, tiles="OpenStreetMap")
+                            
+                            for line in st.session_state.lines:
+                                coords = line.get("coords", [])
+                                if coords:
+                                    folium.PolyLine(coords, color="blue", weight=3).add_to(map_osm)
+                            
+                            for node_id in analyzer.G.nodes():
+                                for coord, nid in analyzer.nodes_coords.items():
+                                    if nid == node_id:
+                                        folium.CircleMarker(location=coord, radius=6, color="red", fill=True, fillColor="red", weight=2).add_to(map_osm)
+                            
+                            if all_coords:
+                                map_osm.fit_bounds(bounds)
+                            
+                            map_file = "/tmp/network_map.html"
+                            map_osm.save(map_file)
+                            
+                            # إنشاء PDF
+                            pdf_buffer = io.BytesIO()
+                            doc = SimpleDocTemplate(pdf_buffer, pagesize=landscape(A4), rightMargin=20, leftMargin=20, topMargin=20, bottomMargin=20)
+                            
+                            elements = []
+                            styles = getSampleStyleSheet()
+                            
+                            # العنوان
+                            title = Paragraph("DRAINAGE NETWORK ANALYSIS REPORT", styles['Heading1'])
+                            elements.append(title)
+                            elements.append(Spacer(1, 12))
+                            
+                            date_text = Paragraph(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}", styles['Normal'])
+                            elements.append(date_text)
+                            elements.append(Spacer(1, 12))
+                            
+                            # ملخص
+                            summary_data = [
+                                ["Metric", "Value"],
+                                ["Total Manholes", str(sum(e['num_nodes'] for e in result['per_edge']))],
+                                ["Total Branches", str(len(result['per_edge']))],
+                                ["Total Traps", str(sum(e['num_traps'] for e in result['per_edge']))],
+                                ["Total Cost (SAR)", f"{result['total_cost']:,.0f}"],
+                            ]
+                            
+                            summary_table = Table(summary_data, colWidths=[100*mm, 100*mm])
+                            summary_table.setStyle(TableStyle([
+                                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1a5fa8')),
+                                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                                ('GRID', (0, 0), (-1, -1), 1, colors.black)
+                            ]))
+                            
+                            elements.append(summary_table)
+                            elements.append(Spacer(1, 15))
+                            
+                            # جدول الكميات
+                            items_data = [["Item", "Quantity", "Unit", "Total (SAR)"]]
+                            for item_name, item_data in result["all_items"].items():
+                                items_data.append([
+                                    item_name,
+                                    f"{item_data['Quantity']:,.2f}",
+                                    item_data["Unit"],
+                                    f"{item_data['Total']:,.0f}"
+                                ])
+                            
+                            items_table = Table(items_data, colWidths=[70*mm, 60*mm, 50*mm, 70*mm])
+                            items_table.setStyle(TableStyle([
+                                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1a5fa8')),
+                                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                                ('GRID', (0, 0), (-1, -1), 1, colors.black)
+                            ]))
+                            
+                            elements.append(items_table)
+                            elements.append(PageBreak())
+                            
+                            # الخريطة
+                            elements.append(Paragraph("Network Map", styles['Heading2']))
+                            elements.append(Spacer(1, 10))
+                            elements.append(Paragraph("See attached map visualization showing the drainage network layout with all branches and manholes.", styles['Normal']))
+                            
+                            doc.build(elements)
+                            
+                            pdf_buffer.seek(0)
+                            
+                            st.download_button(
+                                label="📥 Download PDF",
+                                data=pdf_buffer.getvalue(),
+                                file_name=f"Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                                mime="application/pdf",
+                                use_container_width=True
+                            )
+                            
+                            st.success("✅ PDF Generated!")
+                            
+                        except ImportError:
+                            st.warning("⚠️ reportlab not installed. Use: pip install reportlab")
 
 st.markdown("---")
 st.markdown("""
 <div style="text-align: center; color: #999; font-size: 0.9rem; padding: 20px;">
-    <p>🌊 محلل شبكات السيول | النسخة 10.0 - تحليل شامل مع PDF وخريطة OpenStreetMap</p>
+    <p>🌊 Drainage Network Analyzer | Version 11.0 | Advanced Features</p>
 </div>
 """, unsafe_allow_html=True)
