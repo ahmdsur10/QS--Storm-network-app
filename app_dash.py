@@ -9,7 +9,8 @@ import pandas as pd
 import io
 import folium
 from streamlit_folium import st_folium
-from folium.plugins import Draw, FullScreen
+from folium.plugins import Draw
+from folium.plugins import FullScreen
 
 try:
     import geopandas as gpd
