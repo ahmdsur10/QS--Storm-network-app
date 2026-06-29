@@ -1,7 +1,7 @@
-streamlit
-networkx
-matplotlib
-pandas
-folium
-streamlit-folium
-reportlab
+streamlit>=1.30.0
+networkx>=3.0
+matplotlib>=3.5.0
+pandas>=2.0.0
+folium>=0.15.0
+streamlit-folium>=0.16.0
+reportlab>=4.0.0
