@@ -12,7 +12,7 @@ import pandas as pd
 import io
 import folium
 from streamlit_folium import st_folium
-from folium.plugins import Draw, Fullscreen, MiniMap
+from folium.plugins import Draw, FullScreen, MiniMap
 
 try:
     import geopandas as gpd
@@ -314,7 +314,7 @@ with tabs[1]:
             zoom = 12
 
         m_draw = folium.Map(location=map_center, zoom_start=zoom, tiles="OpenStreetMap")
-        Fullscreen(title="ملء الشاشة").add_to(m_draw)
+        FullScreen(title="ملء الشاشة").add_to(m_draw)
         MiniMap(toggle_display=True).add_to(m_draw)
 
         for ln in st.session_state.lines:
@@ -440,7 +440,7 @@ with tabs[1]:
         else:
             st.warning("⚠️ مكتبة geopandas غير مثبتة.")
 
-# التبويب 2: تحليل الشبكة (تفعيل ميزة الـ Auto-zoom والتكبير المباشر على الخطوط)
+# التبويب 2: تحليل الشبكة
 with tabs[2]:
     st.markdown("<div class='section-title'>🌐 تحليل هندسة الشبكة والعقد والتركيز الموجه</div>", unsafe_allow_html=True)
 
@@ -466,16 +466,15 @@ with tabs[2]:
         line_names = [ln["name"] for ln in st.session_state.lines]
         target_focus = st.selectbox("اختر الخط المراد عمل التكبير والتركيز المباشر عليه:", ["كامل الشبكة"] + line_names)
 
-        st.markdown("#### 🗺️ خريطة الفروع والعقد الهندسية (خلفية OpenStreetMap)")
+        st.markdown("#### 🗺️ خريطة الفروع والعقد الهندسية")
         
-        # قراءة النطاق الجغرافي بناء على الخط المختار أو الشبكة كاملة لعمل زوم فوري دقيق
         if target_focus == "كامل الشبكة":
             all_c = [pt for ln in st.session_state.lines for pt in ln["coords"]]
         else:
             all_c = next(ln["coords"] for ln in st.session_state.lines if ln["name"] == target_focus)
 
         m_net = folium.Map(location=center_of(all_c), zoom_start=14, tiles="OpenStreetMap")
-        Fullscreen().add_to(m_net)
+        FullScreen().add_to(m_net)
 
         for e in ana.edges_list:
             is_target = (target_focus == "كامل الشبكة" or e["line_name"] == target_focus)
@@ -635,10 +634,10 @@ with tabs[4]:
         rep_sub1, rep_sub2 = st.tabs(["🗺️ خريطة تمايز الأقطار للتقرير", "📥 تحميل مستند الـ PDF الفني"])
 
         with rep_sub1:
-            st.markdown("""<div class="info-banner">🗺️ كروكي تفاعلي ملون حسب أقطار الأنابيب المخصصة لكل فرع خلفيتها OpenStreetMap.</div>""", unsafe_allow_html=True)
+            st.markdown("""<div class="info-banner">🗺️ كروكي تفاعلي ملون حسب أقطار الأنابيب المخصصة لكل فرع.</div>""", unsafe_allow_html=True)
             all_c = [pt for ln in st.session_state.lines for pt in ln["coords"]]
             m_rep = folium.Map(location=center_of(all_c), zoom_start=14, tiles="OpenStreetMap")
-            Fullscreen().add_to(m_rep)
+            FullScreen().add_to(m_rep)
 
             diameter_legend_added = set()
             for edge_r in result["per_edge"]:
@@ -653,7 +652,6 @@ with tabs[4]:
             for coord, nid in ana.nodes_coords.items():
                 folium.CircleMarker(location=coord, radius=8, color="#0a2a5e", fill=True, fillColor="#e63946").add_to(m_rep)
 
-            # تعديل إصلاح علامات الاقتباس داخل الـ f-string لعدم حدوث خطأ السنتاكس مجدداً
             legend_items = "".join([f'<div style="display:flex;align-items:center;margin:3px 0"><span style="display:inline-block;width:30px;height:6px;background:{PIPE_COLORS.get(d, "#1a5fa8")};border-radius:3px;margin-left:8px"></span>Ø{d} مم</div>' for d in sorted(diameter_legend_added)])
             legend_html = f'<div style="position:fixed; bottom:30px; right:30px; z-index:9999; background:white; padding:14px 18px; border-radius:10px; box-shadow:0 4px 14px rgba(0,0,0,0.15); font-family:\'Cairo\'; direction:rtl; font-size:13px; border-top:4px solid #1a5fa8;"><b>دليل الأقطار</b><br>{legend_items}</div>'
             m_rep.get_root().html.add_child(folium.Element(legend_html))
@@ -667,7 +665,6 @@ with tabs[4]:
             engineer = st.text_input("اسم المهندس المسؤول", value="")
             
             st.markdown("#### 🌍 إرفاق كروكي خريطة الخلفية للـ PDF")
-            st.info("💡 لطباعة التقرير بخلفية خريطة OpenStreetMap حية، يرجى التقاط لقطة شاشة (Screenshot) سريعة لخريطة التبويب الحالي ورفعها هنا، ليقوم النظام بتضمينها خلف جداول الكميات برمجياً:")
             uploaded_map_img = st.file_uploader("ارفع لقطة شاشة خريطة OpenStreetMap (اختياري)", type=["png", "jpg", "jpeg"])
 
             if st.button("📥 إنشاء وتحميل التقرير الهندسي PDF النهائي", use_container_width=True):
@@ -699,7 +696,7 @@ with tabs[4]:
                         elems.append(Spacer(1, 6*mm))
 
                         if uploaded_map_img:
-                            elems.append(Paragraph("GEOGRAPHICAL INFRASTRUCTURE ROUTE LAYOUT (OPENSTREETMAP)", s_h2))
+                            elems.append(Paragraph("GEOGRAPHICAL INFRASTRUCTURE ROUTE LAYOUT", s_h2))
                             elems.append(HRFlowable(width="100%", thickness=1, color=BLUE, spaceAfter=4))
                             elems.append(Image(uploaded_map_img, width=260*mm, height=120*mm))
                             elems.append(PageBreak())
@@ -707,6 +704,37 @@ with tabs[4]:
                         elems.append(Paragraph("1. DIRECT COST INFRASTRUCTURE BILL OF QUANTITIES (BOQ)", s_h2))
                         boq_data = [["Item Description Specification", "Calculated Qty", "Unit", "Total (SAR)"]]
                         for name, d in result["all_items"].items():
-                            boq_data.append([name, f"{d['الكمية']:,.2f}", d["Unit" if "Unit" in d else "الوحدة"], f"{d['الإجمالي']:,.0f} SAR"])
+                            boq_data.append([name, f"{d['الكمية']:,.2f}", d.get("الوحدة", "Unit"), f"{d['الإجمالي']:,.0f} SAR"])
                         boq_data.append(["TOTAL PROJECT BUDGET ESTIMATION", "", "", f"{result['total_cost']:,.0f} SAR"])
-                        boq_tbl = Table(boq_)
+
+                        boq_tbl = Table(boq_data, colWidths=[110*mm, 40*mm, 35*mm, 80*mm], style=[('BACKGROUND', (0,0), (-1,0), LBLUE), ('TEXTCOLOR', (0,0), (-1,0), WHITE), ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#d0d8e8")), ('PADDING', (0,0), (-1,-1), 6), ('BACKGROUND', (0,-1), (-1,-1), BLUE), ('TEXTCOLOR', (0,-1), (-1,-1), WHITE), ('FONTNAME', (0,-1), (-1,-1), "Helvetica-Bold")])
+                        elems.append(boq_tbl)
+
+                        elems.append(PageBreak())
+                        elems.append(Paragraph("2. INDIVIDUAL STORM SEGMENTS TECHNICAL PARAMETERS & SPECIFICATIONS", s_h2))
+                        branch_data = [["Segment ID", "Length (m)", "Assigned Diameter (mm)", "Assigned Excavation Depth (m)", "Manholes", "Traps", "Subtotal Cost"]]
+                        for e in result["per_edge"]:
+                            branch_data.append([e["line_name"], f"{e['length']:.1f}", str(e["diameter"]), str(e["depth"]), str(e["n_manholes"]), str(e["n_traps"]), f"{e['total']:,.0f} SAR"])
+
+                        br_tbl = Table(branch_data, colWidths=[55*mm, 30*mm, 45*mm, 50*mm, 25*mm, 20*mm, 40*mm], style=[('BACKGROUND', (0,0), (-1,0), LBLUE), ('TEXTCOLOR', (0,0), (-1,0), WHITE), ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#d0d8e8")), ('PADDING', (0,0), (-1,-1), 5), ('ALIGN', (1,0), (-1,-1), "CENTER")])
+                        elems.append(br_tbl)
+                        
+                        elems.append(Spacer(1, 10*mm))
+                        elems.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#d0d8e8")))
+                        elems.append(Paragraph(f"Stormwater Infrastructure Analysis Solution Suite  | Report Generated: {result['generated_at']}", s_footer))
+
+                        doc.build(elems)
+                        buf.seek(0)
+
+                        st.download_button(
+                            label="📥 اضغط هنا لبدء تحميل ملف التقرير الهندسي PDF المعتمد", data=buf.getvalue(),
+                            file_name=f"Stormwater_Network_BOQ_Report.pdf", mime="application/pdf", use_container_width=True
+                        )
+                    except Exception as ex:
+                        st.error(f"❌ خطأ أثناء صياغة مستند الـ PDF: {ex}")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Footer
+# ─────────────────────────────────────────────────────────────────────────────
+st.markdown("---")
+st.markdown("""<div style="text-align:center;color:#9aa4b8;font-size:0.85rem;padding:16px 0">🌊 محلل شبكات ومصارف السيول — لوحة التحكم الذكية المحدثة والتركيز التلقائي</div>""", unsafe_allow_html=True)
