@@ -12,7 +12,7 @@ import pandas as pd
 import io
 import folium
 from streamlit_folium import st_folium
-from folium.plugins import Draw, FullScreen, MiniMap
+from folium.plugins import Draw, Fullscreen, MiniMap
 import base64
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -350,7 +350,7 @@ with tabs[1]:
             zoom = 12
 
         m_draw = folium.Map(location=map_center, zoom_start=zoom, tiles="OpenStreetMap")
-        FullScreen(title="ملء الشاشة").add_to(m_draw)
+        Fullscreen(title="ملء الشاشة").add_to(m_draw)
         MiniMap(toggle_display=True).add_to(m_draw)
 
         # رسم الخطوط الموجودة
@@ -538,7 +538,7 @@ with tabs[2]:
             bnds  = get_bounds(all_c)
 
             m_net = folium.Map(location=mc, zoom_start=14, tiles="CartoDB positron")
-            FullScreen(title="ملء الشاشة").add_to(m_net)
+            Fullscreen(title="ملء الشاشة").add_to(m_net)
             MiniMap(toggle_display=True).add_to(m_net)
 
             # رسم الفروع بألوان حسب الترتيب
@@ -774,7 +774,7 @@ with tabs[4]:
             # الخريطة
             m_rep = folium.Map(location=mc, zoom_start=14,
                                tiles="OpenStreetMap")
-            FullScreen(title="ملء الشاشة").add_to(m_rep)
+            Fullscreen(title="ملء الشاشة").add_to(m_rep)
             MiniMap(toggle_display=True).add_to(m_rep)
 
             # طبقة الأقمار الصناعية اختياري
