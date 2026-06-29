@@ -774,7 +774,7 @@ with tabs[4]:
             # الخريطة
             m_rep = folium.Map(location=mc, zoom_start=14,
                                tiles="OpenStreetMap")
-            FullScreen(title="ملء الشاشة").add_to(m_rep)
+            Fullscreen(title="ملء الشاشة").add_to(m_rep)
             MiniMap(toggle_display=True).add_to(m_rep)
 
             # طبقة الأقمار الصناعية اختياري
