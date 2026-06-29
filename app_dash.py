@@ -12,7 +12,7 @@ import pandas as pd
 import io
 import folium
 from streamlit_folium import st_folium
-from folium.plugins import Draw, FullScreen, MiniMap
+from folium.plugins import Draw, Fullscreen, MiniMap
 import base64
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -330,7 +330,7 @@ with tabs[1]:
             zoom = 12
 
         m_draw = folium.Map(location=map_center, zoom_start=zoom, tiles="OpenStreetMap")
-        FullScreen(title="ملء الشاشة").add_to(m_draw)
+        Fullscreen(title="ملء الشاشة").add_to(m_draw)
         MiniMap(toggle_display=True).add_to(m_draw)
 
         for ln in st.session_state.lines:
@@ -424,7 +424,7 @@ with tabs[2]:
         bnds = get_bounds(all_c)
 
         m_net = folium.Map(location=mc, zoom_start=14, tiles="CartoDB positron")
-        FullScreen(title="ملء الشاشة").add_to(m_net)
+        Fullscreen(title="ملء الشاشة").add_to(m_net)
         
         # رسم الفروع بالأسهم الملونة لبيان اتجاه المصب الحالي
         edge_colors = ["#1a5fa8", "#e63946", "#2a9d8f", "#e9c46a", "#f4a261"]
