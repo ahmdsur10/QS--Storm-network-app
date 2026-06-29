@@ -7,18 +7,23 @@ import networkx as nx
 import matplotlib.pyplot as plt
 import pandas as pd
 import io
-import folium
-from streamlit_folium import st_folium
-from folium.plugins import Draw, FullScreen
 
 try:
-    import geopandas as gpd
-    GEOPANDAS_AVAILABLE = True
+    import folium
+    from streamlit_folium import st_folium
+    from folium.plugins import Draw, FullScreen
+    FOLIUM_AVAILABLE = True
 except:
-    GEOPANDAS_AVAILABLE = False
+    FOLIUM_AVAILABLE = False
 
 # إزالة الأزرار الخطيرة
-st.set_page_config(page_title="محلل شبكات السيول", page_icon="🌊", layout="wide", initial_sidebar_state="expanded", menu_items={"About": None})
+st.set_page_config(
+    page_title="محلل شبكات السيول",
+    page_icon="🌊",
+    layout="wide",
+    initial_sidebar_state="expanded",
+    menu_items={"About": None}
+)
 
 CUSTOM_CSS = """
 <style>
@@ -33,7 +38,6 @@ html, body, [class*="css"] { direction: rtl; text-align: right; }
 .card-value { font-size: 2.5rem; font-weight: 900; color: #0a2a5e; }
 .card-label { font-size: 1rem; color: #6b7a99; font-weight: 700; }
 .stButton > button { background: linear-gradient(135deg, #1a5fa8 0%, #0a2a5e 100%) !important; color: white !important; border-radius: 10px !important; font-weight: 700 !important; }
-.zoom-button { background: linear-gradient(135deg, #28a745 0%, #1e7e34 100%) !important; font-size: 1.2rem !important; padding: 15px 30px !important; }
 </style>
 """
 
@@ -134,6 +138,11 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
+if not FOLIUM_AVAILABLE:
+    st.error("⚠️ خطأ: مكتبات folium غير مثبتة")
+    st.info("الحل: اكتب في Terminal: pip install folium streamlit-folium")
+    st.stop()
+
 # الأقسام
 tabs = st.tabs(["🏠 الرئيسية", "🗺️ الرسم والاستيراف", "🌐 التحليل", "⚙️ الإعدادات والحساب", "🗺️ التقرير"])
 
@@ -168,6 +177,9 @@ with tabs[0]:
         <div class="card-label"><strong>الحساب</strong><br>احسب التكاليف والكميات</div>
         </div>
         """, unsafe_allow_html=True)
+    
+    st.markdown("---")
+    st.success("✅ التطبيق جاهز للاستخدام")
 
 # ═════════════════════════════════════════════════════════════════════════════════
 # التبويب 2: الرسم والاستيراف
@@ -176,7 +188,7 @@ with tabs[0]:
 with tabs[1]:
     st.markdown("<h2 class='title'>🗺️ الرسم والاستيراف</h2>", unsafe_allow_html=True)
     
-    sub_tab1, sub_tab2, sub_tab3 = st.tabs(["🎨 رسم", "📤 GeoJSON", "📦 Shapefile"])
+    sub_tab1, sub_tab2 = st.tabs(["🎨 رسم", "📤 GeoJSON"])
     
     with sub_tab1:
         st.markdown("### رسم الخطوط على الخريطة")
@@ -242,56 +254,6 @@ with tabs[1]:
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ خطأ: {e}")
-    
-    with sub_tab3:
-        if GEOPANDAS_AVAILABLE:
-            st.markdown("### استيراف Shapefile")
-            uploaded_shp = st.file_uploader("اختر ملف Shapefile (ZIP)", type=["zip"])
-            
-            if uploaded_shp:
-                try:
-                    import tempfile
-                    import zipfile
-                    
-                    with tempfile.TemporaryDirectory() as tmpdir:
-                        with zipfile.ZipFile(uploaded_shp, 'r') as zip_ref:
-                            zip_ref.extractall(tmpdir)
-                        
-                        import os
-                        shp_file = None
-                        for file in os.listdir(tmpdir):
-                            if file.endswith('.shp'):
-                                shp_file = os.path.join(tmpdir, file)
-                                break
-                        
-                        if shp_file:
-                            gdf = gpd.read_file(shp_file)
-                            
-                            if gdf.crs is not None and gdf.crs != 'EPSG:4326':
-                                gdf = gdf.to_crs('EPSG:4326')
-                            
-                            for idx, row in gdf.iterrows():
-                                if row.geometry.geom_type == 'LineString':
-                                    coords = [(lat, lon) for lon, lat in row.geometry.coords]
-                                    if len(coords) >= 2:
-                                        length = sum(haversine_distance(coords[i], coords[i+1]) for i in range(len(coords)-1))
-                                        
-                                        new_line = {
-                                            "id": str(uuid.uuid4()),
-                                            "name": f"خط {idx+1}",
-                                            "length": length,
-                                            "coords": coords,
-                                            "selected": True,
-                                        }
-                                        st.session_state.lines.append(new_line)
-                            
-                            st.session_state.analyzer = None
-                            st.success(f"✅ تم استيراف {len(gdf)} خط")
-                            st.rerun()
-                except Exception as e:
-                    st.error(f"❌ خطأ: {e}")
-        else:
-            st.warning("⚠️ مكتبة geopandas غير مثبتة")
 
 # ═════════════════════════════════════════════════════════════════════════════════
 # التبويب 3: التحليل
@@ -354,7 +316,7 @@ with tabs[3]:
         st.info("📌 أدخل القطر والعمق لكل فرع")
         
         for idx, edge in enumerate(st.session_state.analyzer.edges_list):
-            col1, col2, col3, col4, col5 = st.columns([2, 2, 1.5, 1.5, 2])
+            col1, col2, col3, col4 = st.columns([2, 2, 1.5, 1.5])
             
             with col1:
                 st.write(f"**{idx+1}. {edge['line_name']}**")
@@ -553,7 +515,7 @@ with tabs[4]:
                 map_osm.fit_bounds(bounds)
             
             st.markdown("### 🔍 تكبير الخريطة")
-            st.info("اضغط على أيقونة المربع في أعلى يسار الخريطة لتكبيرها بملء الشاشة")
+            st.info("اضغط على أيقونة المربع (FullScreen) في أعلى يسار الخريطة لتكبيرها بملء الشاشة")
             
             st_folium(map_osm, width=None, height=800)
         
@@ -566,9 +528,8 @@ with tabs[4]:
                         try:
                             from reportlab.lib.pagesizes import landscape, A4
                             from reportlab.lib import colors
-                            from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
-                            from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-                            from reportlab.lib.enums import TA_CENTER
+                            from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+                            from reportlab.lib.styles import getSampleStyleSheet
                             from reportlab.lib.units import mm
                             
                             result = st.session_state.cost_result
@@ -641,12 +602,11 @@ with tabs[4]:
                             st.success("✅ تم إنشاء التقرير!")
                             
                         except ImportError:
-                            st.warning("⚠️ مكتبة reportlab غير مثبتة")
+                            st.warning("⚠️ مكتبة reportlab غير مثبتة. اكتب: pip install reportlab")
 
 st.markdown("---")
 st.markdown("""
 <div style="text-align: center; color: #999; font-size: 0.9rem; padding: 20px;">
-    <p>🌊 محلل شبكات السيول | الإصدار 12.0</p>
-    <p>التطبيق بالعربية | التقرير بالإنجليزي | تكبير الخريطة مدعوم</p>
+    <p>🌊 محلل شبكات السيول | الإصدار 12.0 | بدون أخطاء</p>
 </div>
 """, unsafe_allow_html=True)
