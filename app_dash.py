@@ -9,7 +9,7 @@ import pandas as pd
 import io
 import folium
 from streamlit_folium import st_folium
-from folium.plugins import Draw, Fullscreen
+from folium.plugins import Draw, FullScreen
 
 try:
     import geopandas as gpd
@@ -181,7 +181,7 @@ with tabs[1]:
     with sub_tab1:
         st.markdown("### رسم الخطوط على الخريطة")
         m = folium.Map(location=[24.7136, 46.6753], zoom_start=12, tiles="OpenStreetMap")
-        Fullscreen().add_to(m)
+        FullScreen().add_to(m)
         
         for line in st.session_state.lines:
             coords = line.get("coords", [])
@@ -529,7 +529,7 @@ with tabs[4]:
                 center = [24.7136, 46.6753]
             
             map_osm = folium.Map(location=center, zoom_start=14, tiles="OpenStreetMap")
-            Fullscreen().add_to(map_osm)
+            FullScreen().add_to(map_osm)
             
             for line in st.session_state.lines:
                 coords = line.get("coords", [])
