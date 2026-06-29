@@ -12,7 +12,7 @@ import pandas as pd
 import io
 import folium
 from streamlit_folium import st_folium
-from folium.plugins import Draw, FullScreen, MiniMap
+from folium.plugins import Draw, Fullscreen, MiniMap
 import base64
 
 # ─────────────────────────────────────────────────────────────────────────────
