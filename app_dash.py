@@ -36,7 +36,7 @@ st.set_page_config(
 # ─────────────────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght=400;600;700;900&display=swap');
 
 * { box-sizing: border-box; font-family: 'Cairo', sans-serif !important; }
 html, body, [class*="css"] { direction: rtl; text-align: right; }
@@ -211,7 +211,6 @@ class NetworkAnalyzer:
                 sn, en = self.nodes_coords[s], self.nodes_coords[e]
                 self.G.add_edge(sn, en, distance=dist)
                 
-                # جلب القطر والعمق المخزنين مسبقاً في الخط لتفادي تصفير القيم
                 self.edges_list.append({
                     "id": line["id"],
                     "start_coord": s,
@@ -240,7 +239,7 @@ for key, val in [("lines", []), ("analyzer", None), ("cost", None)]:
         st.session_state[key] = val
 
 # ─────────────────────────────────────────────────────────────────────────────
-# التبويبات الرئيسية بالترتيب المنطقي المعتمد
+# التبويبات الرئيسية
 # ─────────────────────────────────────────────────────────────────────────────
 TAB_LABELS = [
     "🏠 الرئيسية",
@@ -251,15 +250,13 @@ TAB_LABELS = [
 ]
 tabs = st.tabs(TAB_LABELS)
 
-# ══════════════════════════════════════════════════════════════════════════════
 # التبويب 0: الرئيسية
-# ══════════════════════════════════════════════════════════════════════════════
 with tabs[0]:
     st.markdown("<div class='section-title'>خطوات استخدام التطبيق</div>", unsafe_allow_html=True)
 
     c1, c2, c3, c4 = st.columns(4)
     steps = [
-        ("🗺️", "١ · رسم وإدخال", "ارسم خطوط الشبكة مباشرة على الخريطة أو استورد ملفات GeoJSON / Shapefile"),
+        ("🗺️", "١ · رسم وإدخل", "ارسم خطوط الشبكة مباشرة على الخريطة أو استورد ملفات GeoJSON / Shapefile"),
         ("🌐", "٢ · تحليل الشبكة", "حلل المناهل والفروع والأطوال واعرضها على خريطة تفاعلية ملونة"),
         ("💰", "٣ · التكاليف", "أدخل قطر وعمق كل فرع بشكل مستقل ثم احسب كميات التربة والأنابيب والتكلفة الكلية للمشروع"),
         ("📋", "٤ · التقرير", "تصدير تقرير PDF كامل مع الخريطة وجداول الكميات والتكاليف"),
@@ -296,9 +293,7 @@ with tabs[0]:
             </div>
             """, unsafe_allow_html=True)
 
-# ══════════════════════════════════════════════════════════════════════════════
-# التبويب 1: رسم وإدخال
-# ══════════════════════════════════════════════════════════════════════════════
+# التبويب 1: رسم وإدخل
 with tabs[1]:
     st.markdown("<div class='section-title'>🗺️ رسم وإدخال الشبكة</div>", unsafe_allow_html=True)
     sub1, sub2, sub3 = st.tabs(["✏️ رسم على الخريطة", "📤 استيراد GeoJSON", "📦 استيراد Shapefile"])
@@ -355,8 +350,8 @@ with tabs[1]:
                             "name": f"خط {len(st.session_state.lines)+1}",
                             "length": length,
                             "coords": coords,
-                            "diameter": 600,  # القيمة الافتراضية الأولية للفرع
-                            "depth": 1.5,     # العمق الافتراضي الأولي للفرع
+                            "diameter": 600,
+                            "depth": 1.5,
                             "selected": True,
                         }
                         st.session_state.lines.append(new_line)
@@ -445,11 +440,9 @@ with tabs[1]:
         else:
             st.warning("⚠️ مكتبة geopandas غير مثبتة.")
 
-# ══════════════════════════════════════════════════════════════════════════════
-# التبويب 2: تحليل الشبكة
-# ══════════════════════════════════════════════════════════════════════════════
+# التبويب 2: تحليل الشبكة (تفعيل ميزة الـ Auto-zoom والتكبير المباشر على الخطوط)
 with tabs[2]:
-    st.markdown("<div class='section-title'>🌐 تحليل هندسة الشبكة والعقد</div>", unsafe_allow_html=True)
+    st.markdown("<div class='section-title'>🌐 تحليل هندسة الشبكة والعقد والتركيز الموجه</div>", unsafe_allow_html=True)
 
     if not st.session_state.lines:
         st.warning("⚠️ يرجى إضافة ورسم مسارات خطوط أولاً من التبويب السابق.")
@@ -469,34 +462,45 @@ with tabs[2]:
             with col:
                 st.markdown(f'<div class="kpi-card"><div class="kpi-value">{val}</div><div class="kpi-label">{lbl}</div></div>', unsafe_allow_html=True)
 
-        st.markdown("#### 📋 قائمة فروع الشبكة المحللة")
-        rows = [{"اسم الفرع الهيدروليكي": e["line_name"], "طول الفرع (م)": f"{e['distance']:.2f}", "منهل البداية": f"منهل #{e['node_start']}", "منهل النهاية": f"منهل #{e['node_end']}"} for e in ana.edges_list]
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        st.markdown("#### 🔍 تحديد فرع لعمل تكبير (Zoom) تلقائي عليه")
+        line_names = [ln["name"] for ln in st.session_state.lines]
+        target_focus = st.selectbox("اختر الخط المراد عمل التكبير والتركيز المباشر عليه:", ["كامل الشبكة"] + line_names)
 
-        st.markdown("#### 🗺️ خريطة الفروع والعقد الهندسية")
-        all_c = [pt for ln in st.session_state.lines for pt in ln["coords"]]
-        m_net = folium.Map(location=center_of(all_c), zoom_start=14, tiles="CartoDB positron")
+        st.markdown("#### 🗺️ خريطة الفروع والعقد الهندسية (خلفية OpenStreetMap)")
+        
+        # قراءة النطاق الجغرافي بناء على الخط المختار أو الشبكة كاملة لعمل زوم فوري دقيق
+        if target_focus == "كامل الشبكة":
+            all_c = [pt for ln in st.session_state.lines for pt in ln["coords"]]
+        else:
+            all_c = next(ln["coords"] for ln in st.session_state.lines if ln["name"] == target_focus)
+
+        m_net = folium.Map(location=center_of(all_c), zoom_start=14, tiles="OpenStreetMap")
         FullScreen().add_to(m_net)
 
         for e in ana.edges_list:
-            folium.PolyLine([e["start_coord"], e["end_coord"]], color="#1a5fa8", weight=5, opacity=0.85, tooltip=e["line_name"]).add_to(m_net)
+            is_target = (target_focus == "كامل الشبكة" or e["line_name"] == target_focus)
+            weight_render = 8 if is_target else 4
+            opacity_render = 1.0 if is_target else 0.4
+            
+            folium.PolyLine([e["start_coord"], e["end_coord"]], color="#1a5fa8", weight=weight_render, opacity=opacity_render, tooltip=e["line_name"]).add_to(m_net)
 
         for coord, nid in ana.nodes_coords.items():
-            folium.CircleMarker(location=coord, radius=8, color="#0a2a5e", fill=True, fillColor="#e63946", fillOpacity=0.9, tooltip=f"منهل #{nid}").add_to(m_net)
+            folium.CircleMarker(location=coord, radius=7, color="#0a2a5e", fill=True, fillColor="#e63946", fillOpacity=0.9, tooltip=f"منهل #{nid}").add_to(m_net)
 
         m_net.fit_bounds(get_bounds(all_c))
         st_folium(m_net, width=None, height=500, key="analysis_map")
 
-# ══════════════════════════════════════════════════════════════════════════════
-# التبويب 3: التكاليف وحساب الكميات (تم إصلاح حفظ مدخلات الفروع وحساب الجداول بالكامل)
-# ══════════════════════════════════════════════════════════════════════════════
+        st.markdown("#### 📋 قائمة فروع الشبكة المحللة")
+        rows = [{"اسم الفرع الهيدروليكي": e["line_name"], "طول الفرع (م)": f"{e['distance']:.2f}", "منهل البداية": f"منهل #{e['node_start']}", "منهل النهاية": f"منهل #{e['node_end']}"} for e in ana.edges_list]
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+# التبويب 3: التكاليف وحساب الكميات
 with tabs[3]:
     st.markdown("<div class='section-title'>💰 لوحة التحكم في مواصفات الفروع وجدول الكميات</div>", unsafe_allow_html=True)
 
     if not st.session_state.lines:
         st.warning("⚠️ يرجى رسم وإدخال خطوط الشبكة أولاً.")
     else:
-        # التأكد من بناء المحلل بشكل صحيح ليعكس البيانات الحالية
         st.session_state.analyzer = NetworkAnalyzer(st.session_state.lines)
         ana = st.session_state.analyzer
 
@@ -506,28 +510,23 @@ with tabs[3]:
         </div>
         """, unsafe_allow_html=True)
 
-        # رؤوس أعمدة مدخلات التحكم لكل فرع
         hc = st.columns([0.5, 2.5, 1.5, 2, 2])
         headers = ["#", "اسم الفرع", "الطول (م)", "القطر الاختياري (مم)", "العمق الاختياري (م)"]
         for col, txt in zip(hc, headers):
             col.markdown(f"**{txt}**")
         st.markdown("<hr style='margin:8px 0;'>", unsafe_allow_html=True)
 
-        # توليد حقول التعديل وحفظها مباشرة داخل session_state.lines لمنع ضياعها
         for idx, line in enumerate(st.session_state.lines):
             cols = st.columns([0.5, 2.5, 1.5, 2, 2])
             cols[0].write(f"**{idx+1}**")
             
-            # 1. تعديل الاسم
             new_name = cols[1].text_input("الاسم", value=line["name"], key=f"cost_name_{line['id']}", label_visibility="collapsed")
             if new_name != line["name"]:
                 st.session_state.lines[idx]["name"] = new_name
-                st.session_state.cost = None  # تصفير الحسابات القديمة لطلب إعادة الضغط
+                st.session_state.cost = None 
             
-            # عرض الطول
             cols[2].write(f"{line['length']:.1f} م")
             
-            # 2. تعديل القطر لكل فرع بشكل منفصل
             current_dia = line.get("diameter", 600)
             dia_options = sorted(PIPE_PRICES.keys())
             selected_dia = cols[3].selectbox(
@@ -539,7 +538,6 @@ with tabs[3]:
                 st.session_state.lines[idx]["diameter"] = selected_dia
                 st.session_state.cost = None
 
-            # 3. تعديل العمق لكل فرع بشكل منفصل
             current_depth = float(line.get("depth", 1.5))
             selected_depth = cols[4].number_input(
                 "العمق", min_value=0.5, max_value=12.0, value=current_depth, step=0.1,
@@ -551,9 +549,7 @@ with tabs[3]:
 
         st.markdown("---")
 
-        # زر الحساب الرئيسي وتوليد جداول الكميات
         if st.button("🧮 حساب وتحديث جدول كميات المشروع بالكامل", use_container_width=True):
-            # إعادة بناء مصفوفة الحساب الدقيق بناءً على المدخلات المحدثة للفروع
             st.session_state.analyzer = NetworkAnalyzer(st.session_state.lines)
             ana = st.session_state.analyzer
             
@@ -601,12 +597,10 @@ with tabs[3]:
             st.success("✅ تم تحديث كشوفات التكلفة وحساب الكميات الهندسية بنجاح!")
             st.rerun()
 
-        # ── عرض جدول حساب الكميات الفوري ──
         if st.session_state.cost:
             result = st.session_state.cost
             st.markdown("### 📊 كشف حساب وجدول كميات المشروع المعتمد")
 
-            # عرض بطاقات الأداء المالي
             k1, k2, k3, k4 = st.columns(4)
             t_mh = sum(e["n_manholes"] for e in result["per_edge"])
             t_tr = sum(e["n_traps"] for e in result["per_edge"])
@@ -616,13 +610,11 @@ with tabs[3]:
             k3.markdown(f'<div class="kpi-card"><div class="kpi-value">{len(result["per_edge"])}</div><div class="kpi-label">عدد مسارات الفروع</div></div>', unsafe_allow_html=True)
             k4.markdown(f'<div class="kpi-card"><div class="kpi-value">{result["total_cost"]:,.0f}</div><div class="kpi-label">الميزانية الإجمالية التقديرية (SAR)</div></div>', unsafe_allow_html=True)
 
-            # عرض جدول بنود التكلفة الإجمالي والكميات
             rows_boq = [{"البند الإنشائي للمشروع": name, "الكمية المحسوبة": f"{data['الكمية']:,.2f}", "الوحدة": data["الوحدة"], "الإجمالي (ريال سعودي)": f"{data['الإجمالي']:,.2f}"} for name, data in result["all_items"].items()]
             st.dataframe(pd.DataFrame(rows_boq), use_container_width=True, hide_index=True)
 
             st.markdown(f'<div class="total-row">💰 صافي تكلفة البنود الإنشائية الرأسمالية: {result["total_cost"]:,.0f} ريال سعودي</div>', unsafe_allow_html=True)
 
-            # تفاصيل تفكيك كل فرع هيدروليكي على حدة
             with st.expander("📂 استعراض الفواتير التحليلية والكميات لكل فرع على حدة"):
                 for e in result["per_edge"]:
                     st.markdown(f"📌 **{e['line_name']}** — مواصفات مخصصة: [ القطر: {e['diameter']} مم | العمق: {e['depth']} م | الطول: {e['length']:.1f} م ]")
@@ -631,9 +623,7 @@ with tabs[3]:
                     st.markdown(f"**إجمالي تكلفة هذا الفرع الفرعي بشكل مستقل: {e['total']:,.0f} ريال**")
                     st.markdown("<hr style='border-top:1px dashed #9aa4b8;'>", unsafe_allow_html=True)
 
-# ══════════════════════════════════════════════════════════════════════════════
 # التبويب 4: التقرير والطباعة
-# ══════════════════════════════════════════════════════════════════════════════
 with tabs[4]:
     st.markdown("<div class='section-title'>📋 تصدير التقارير الفنية وطباعة PDF</div>", unsafe_allow_html=True)
 
@@ -645,7 +635,7 @@ with tabs[4]:
         rep_sub1, rep_sub2 = st.tabs(["🗺️ خريطة تمايز الأقطار للتقرير", "📥 تحميل مستند الـ PDF الفني"])
 
         with rep_sub1:
-            st.markdown("""<div class="info-banner">🗺️ كروكي تفاعلي ملون حسب أقطار الأنابيب المخصصة لكل فرع.</div>""", unsafe_allow_html=True)
+            st.markdown("""<div class="info-banner">🗺️ كروكي تفاعلي ملون حسب أقطار الأنابيب المخصصة لكل فرع خلفيتها OpenStreetMap.</div>""", unsafe_allow_html=True)
             all_c = [pt for ln in st.session_state.lines for pt in ln["coords"]]
             m_rep = folium.Map(location=center_of(all_c), zoom_start=14, tiles="OpenStreetMap")
             FullScreen().add_to(m_rep)
@@ -663,8 +653,8 @@ with tabs[4]:
             for coord, nid in ana.nodes_coords.items():
                 folium.CircleMarker(location=coord, radius=8, color="#0a2a5e", fill=True, fillColor="#e63946").add_to(m_rep)
 
-            # كود توليد قائمة مفتاح الخريطة
-            legend_items = "".join([f"<div style='display:flex;align-items:center;margin:3px 0'><span style='display:inline-block;width:30px;height:6px;background:{PIPE_COLORS.get(d,\'#1a5fa8\')};border-radius:3px;margin-left:8px'></span>Ø{d} مم</div>" for d in sorted(diameter_legend_added)])
+            # تعديل إصلاح علامات الاقتباس داخل الـ f-string لعدم حدوث خطأ السنتاكس مجدداً
+            legend_items = "".join([f'<div style="display:flex;align-items:center;margin:3px 0"><span style="display:inline-block;width:30px;height:6px;background:{PIPE_COLORS.get(d, "#1a5fa8")};border-radius:3px;margin-left:8px"></span>Ø{d} مم</div>' for d in sorted(diameter_legend_added)])
             legend_html = f'<div style="position:fixed; bottom:30px; right:30px; z-index:9999; background:white; padding:14px 18px; border-radius:10px; box-shadow:0 4px 14px rgba(0,0,0,0.15); font-family:\'Cairo\'; direction:rtl; font-size:13px; border-top:4px solid #1a5fa8;"><b>دليل الأقطار</b><br>{legend_items}</div>'
             m_rep.get_root().html.add_child(folium.Element(legend_html))
             
@@ -675,6 +665,10 @@ with tabs[4]:
             proj_name = st.text_input("اسم المشروع الرسمي بالتقرير", value="مشروع شبكة صرف سيلي متكامل")
             proj_owner = st.text_input("الجهة المالكة للمشروع", value="أمانة المنطقة")
             engineer = st.text_input("اسم المهندس المسؤول", value="")
+            
+            st.markdown("#### 🌍 إرفاق كروكي خريطة الخلفية للـ PDF")
+            st.info("💡 لطباعة التقرير بخلفية خريطة OpenStreetMap حية، يرجى التقاط لقطة شاشة (Screenshot) سريعة لخريطة التبويب الحالي ورفعها هنا، ليقوم النظام بتضمينها خلف جداول الكميات برمجياً:")
+            uploaded_map_img = st.file_uploader("ارفع لقطة شاشة خريطة OpenStreetMap (اختياري)", type=["png", "jpg", "jpeg"])
 
             if st.button("📥 إنشاء وتحميل التقرير الهندسي PDF النهائي", use_container_width=True):
                 with st.spinner("جاري صياغة ملف PDF..."):
@@ -682,7 +676,7 @@ with tabs[4]:
                         from reportlab.lib.pagesizes import landscape, A4
                         from reportlab.lib import colors
                         from reportlab.lib.units import mm
-                        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, HRFlowable, PageBreak
+                        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, HRFlowable, PageBreak, Image
                         from reportlab.lib.styles import ParagraphStyle
                         from reportlab.lib.enums import TA_CENTER
 
@@ -696,52 +690,24 @@ with tabs[4]:
                         s_footer = ParagraphStyle("f", fontName="Helvetica", fontSize=8, textColor=colors.grey, alignment=TA_CENTER)
 
                         elems = []
-                        # الهيدر الفني
                         elems.append(Table([[Paragraph(f"FLOOD INFRASTRUCTURE ENGINEERING REPORT<br/><font size=11>{proj_name}</font>", s_title)]], colWidths=[265*mm], style=[('BACKGROUND', (0,0), (-1,-1), BLUE), ('PADDING', (0,0), (-1,-1), 15), ('ROUNDEDCORNERS', (0,0), (-1,-1), [6,6,6,6])]))
                         elems.append(Spacer(1, 6*mm))
 
-                        # تفاصيل المشروع البنيوية
                         info_data = [["Project Client / Owner:", proj_owner, "Calculation Timestamp:", result["generated_at"]], ["Lead Reviewing Engineer:", engineer or "Engineering Dept", "System Engine Version:", "v14.0 المطور"]]
                         info_tbl = Table(info_data, colWidths=[55*mm, 75*mm, 45*mm, 90*mm], style=[('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#d0d8e8")), ('BACKGROUND', (0,0), (0,-1), GREY), ('BACKGROUND', (2,0), (2,-1), GREY), ('PADDING', (0,0), (-1,-1), 6)])
                         elems.append(info_tbl)
                         elems.append(Spacer(1, 6*mm))
 
-                        # جدول الفواتير الإجمالية
+                        if uploaded_map_img:
+                            elems.append(Paragraph("GEOGRAPHICAL INFRASTRUCTURE ROUTE LAYOUT (OPENSTREETMAP)", s_h2))
+                            elems.append(HRFlowable(width="100%", thickness=1, color=BLUE, spaceAfter=4))
+                            elems.append(Image(uploaded_map_img, width=260*mm, height=120*mm))
+                            elems.append(PageBreak())
+
                         elems.append(Paragraph("1. DIRECT COST INFRASTRUCTURE BILL OF QUANTITIES (BOQ)", s_h2))
                         boq_data = [["Item Description Specification", "Calculated Qty", "Unit", "Total (SAR)"]]
                         for name, d in result["all_items"].items():
                             boq_data.append([name, f"{d['الكمية']:,.2f}", d["Unit" if "Unit" in d else "الوحدة"], f"{d['الإجمالي']:,.0f} SAR"])
                         boq_data.append(["TOTAL PROJECT BUDGET ESTIMATION", "", "", f"{result['total_cost']:,.0f} SAR"])
 
-                        boq_tbl = Table(boq_data, colWidths=[110*mm, 40*mm, 35*mm, 80*mm], style=[('BACKGROUND', (0,0), (-1,0), LBLUE), ('TEXTCOLOR', (0,0), (-1,0), WHITE), ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#d0d8e8")), ('PADDING', (0,0), (-1,-1), 6), ('BACKGROUND', (0,-1), (-1,-1), BLUE), ('TEXTCOLOR', (0,-1), (-1,-1), WHITE), ('FONTNAME', (0,-1), (-1,-1), "Helvetica-Bold")])
-                        elems.append(boq_tbl)
-
-                        elems.append(PageBreak())
-                        # جدول تفاصيل الفروع المستقلة بالكامل
-                        elems.append(Paragraph("2. INDIVIDUAL STORM SEGMENTS TECHNICAL PARAMETERS & SPECIFICATIONS", s_h2))
-                        branch_data = [["Segment ID", "Length (m)", "Assigned Diameter (mm)", "Assigned Excavation Depth (m)", "Manholes", "Traps", "Subtotal Cost"]]
-                        for e in result["per_edge"]:
-                            branch_data.append([e["line_name"], f"{e['length']:.1f}", str(e["diameter"]), str(e["depth"]), str(e["n_manholes"]), str(e["n_traps"]), f"{e['total']:,.0f} SAR"])
-
-                        br_tbl = Table(branch_data, colWidths=[55*mm, 30*mm, 45*mm, 50*mm, 25*mm, 20*mm, 40*mm], style=[('BACKGROUND', (0,0), (-1,0), LBLUE), ('TEXTCOLOR', (0,0), (-1,0), WHITE), ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#d0d8e8")), ('PADDING', (0,0), (-1,-1), 5), ('ALIGN', (1,0), (-1,-1), "CENTER")])
-                        elems.append(br_tbl)
-                        
-                        elems.append(Spacer(1, 10*mm))
-                        elems.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#d0d8e8")))
-                        elems.append(Paragraph(f"Stormwater Infrastructure Analysis Solution Suite  | Report Generated: {result['generated_at']}", s_footer))
-
-                        doc.build(elems)
-                        buf.seek(0)
-
-                        st.download_button(
-                            label="📥 اضغط هنا لبدء تحميل ملف التقرير الهندسي PDF المعتمد", data=buf.getvalue(),
-                            file_name=f"Stormwater_Network_BOQ_Report.pdf", mime="application/pdf", use_container_width=True
-                        )
-                    except Exception as ex:
-                        st.error(f"❌ خطأ أثناء صياغة مستند الـ PDF: {ex}")
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Footer
-# ─────────────────────────────────────────────────────────────────────────────
-st.markdown("---")
-st.markdown("""<div style="text-align:center;color:#9aa4b8;font-size:0.85rem;padding:16px 0">🌊 محلل شبكات ومصارف السيول — لوحة التحكم الذكية المحدثة</div>""", unsafe_allow_html=True)
+                        boq_tbl = Table(boq_
