@@ -15,12 +15,6 @@ from streamlit_folium import st_folium
 from folium.plugins import Draw, FullScreen, MiniMap
 import base64
 
-try:
-    import geopandas as gpd
-    GEOPANDAS_AVAILABLE = True
-except Exception:
-    GEOPANDAS_AVAILABLE = False
-
 # ─────────────────────────────────────────────────────────────────────────────
 # إعداد الصفحة
 # ─────────────────────────────────────────────────────────────────────────────
@@ -291,7 +285,7 @@ with tabs[0]:
 
     c1, c2, c3, c4 = st.columns(4)
     steps = [
-        ("🗺️", "١ · رسم وإدخال", "ارسم خطوط الشبكة مباشرة على الخريطة أو استورد ملفات GeoJSON / Shapefile"),
+        ("🗺️", "١ · رسم وإدخال", "ارسم خطوط الشبكة مباشرة على الخريطة أو استورد ملفات GeoJSON القياسية"),
         ("🌐", "٢ · تحليل الشبكة", "حلل المناهل والفروع والأطوال واعرضها على خريطة تفاعلية ملونة"),
         ("💰", "٣ · التكاليف", "أدخل قطر وعمق كل فرع ثم احسب كميات التربة والأنابيب والمناهل والتكلفة"),
         ("📋", "٤ · التقرير", "تصدير تقرير PDF كامل مع الخريطة وجداول الكميات والتكاليف"),
@@ -335,7 +329,7 @@ with tabs[0]:
 with tabs[1]:
     st.markdown("<div class='section-title'>🗺️ رسم وإدخال الشبكة</div>", unsafe_allow_html=True)
 
-    sub1, sub2, sub3 = st.tabs(["✏️ رسم على الخريطة", "📤 استيراد GeoJSON", "📦 استيراد Shapefile"])
+    sub1, sub2 = st.tabs(["✏️ رسم على الخريطة", "📤 استيراد GeoJSON"])
 
     # ── رسم ──────────────────────────────────────────────────────────────────
     with sub1:
@@ -447,7 +441,7 @@ with tabs[1]:
                 st.session_state.cost = None
                 st.rerun()
 
-    # ── GeoJSON ──────────────────────────────────────────────────────────────
+    # ── GeoJSON (تم استبدال geopandas بـ مكتبة json القياسية تماماً) ─────────
     with sub2:
         st.markdown("### استيراد ملف GeoJSON")
         uploaded_geojson = st.file_uploader("اختر ملف GeoJSON", type=["geojson", "json"], key="geo_up")
@@ -472,54 +466,10 @@ with tabs[1]:
                             added += 1
                 st.session_state.analyzer = None
                 st.session_state.cost = None
-                st.success(f"✅ تمت إضافة {added} خط من GeoJSON")
+                st.success(f"✅ تمت إضافة {added} خط من GeoJSON بنجاح!")
                 st.rerun()
             except Exception as e:
-                st.error(f"❌ خطأ في قراءة الملف: {e}")
-
-    # ── Shapefile ────────────────────────────────────────────────────────────
-    with sub3:
-        if GEOPANDAS_AVAILABLE:
-            st.markdown("### استيراد Shapefile (ZIP)")
-            uploaded_shp = st.file_uploader("اختر ملف ZIP يحتوي على Shapefile", type=["zip"], key="shp_up")
-            if uploaded_shp:
-                try:
-                    import tempfile, zipfile, os
-                    with tempfile.TemporaryDirectory() as tmpdir:
-                        with zipfile.ZipFile(uploaded_shp, 'r') as zf:
-                            zf.extractall(tmpdir)
-                        shp_path = next(
-                            (os.path.join(tmpdir, f) for f in os.listdir(tmpdir) if f.endswith(".shp")),
-                            None
-                        )
-                        if shp_path:
-                            gdf = gpd.read_file(shp_path)
-                            if gdf.crs and str(gdf.crs) != "EPSG:4326":
-                                gdf = gdf.to_crs("EPSG:4326")
-                            added = 0
-                            for idx, row in gdf.iterrows():
-                                if row.geometry and row.geometry.geom_type == "LineString":
-                                    coords = [(lat, lon) for lon, lat in row.geometry.coords]
-                                    if len(coords) >= 2:
-                                        st.session_state.lines.append({
-                                            "id": str(uuid.uuid4()),
-                                            "name": f"خط {len(st.session_state.lines)+1}",
-                                            "length": line_length(coords),
-                                            "coords": coords,
-                                            "selected": True,
-                                        })
-                                        added += 1
-                            st.session_state.analyzer = None
-                            st.session_state.cost = None
-                            st.success(f"✅ تمت إضافة {added} خط من Shapefile")
-                            st.rerun()
-                        else:
-                            st.error("❌ لم يُعثر على ملف .shp داخل الـ ZIP")
-                except Exception as e:
-                    st.error(f"❌ خطأ: {e}")
-        else:
-            st.warning("⚠️ مكتبة geopandas غير مثبتة — لا يمكن استيراد Shapefile")
-            st.code("pip install geopandas", language="bash")
+                st.error(f"❌ خطأ في قراءة ملف GeoJSON: {e}")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # التبويب 2: تحليل الشبكة
@@ -1127,11 +1077,8 @@ with tabs[4]:
 
                     except ImportError:
                         st.error("❌ مكتبة reportlab غير مثبتة.")
-                        st.code("pip install reportlab", language="bash")
                     except Exception as ex:
                         st.error(f"❌ خطأ في إنشاء التقرير: {ex}")
-                        import traceback
-                        st.text(traceback.format_exc())
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Footer
@@ -1139,7 +1086,7 @@ with tabs[4]:
 st.markdown("---")
 st.markdown("""
 <div style="text-align:center;color:#9aa4b8;font-size:0.85rem;padding:16px 0">
-    🌊 محلل شبكات السيول — الإصدار 13.0
+    🌊 محلل شبكات السيول — الإصدار 13.0 (نسخة السحاب الخفيفة)
     &nbsp;|&nbsp; الخطوات: رسم ← تحليل ← تكاليف ← تقرير
 </div>
 """, unsafe_allow_html=True)
