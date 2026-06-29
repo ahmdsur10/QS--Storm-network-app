@@ -11,7 +11,7 @@ import pandas as pd
 import io
 import folium
 from streamlit_folium import st_folium
-from folium.plugins import Draw, FullScreen, MiniMap
+from folium.plugins import Draw, Fullscreen, MiniMap
 
 # ─────────────────────────────────────────────────────────────────────────────
 # إعداد الصفحة العامة
@@ -177,7 +177,7 @@ with tabs[1]:
     map_center = center_of([pt for ln in st.session_state.lines for pt in ln["coords"]]) if st.session_state.lines else [24.7136, 46.6753]
     
     m_draw = folium.Map(location=map_center, zoom_start=13, tiles="OpenStreetMap")
-    FullScreen().add_to(m_draw)
+    Fullscreen().add_to(m_draw)
     
     for ln in st.session_state.lines:
         folium.PolyLine(ln["coords"], color="#e63946", weight=5, tooltip=ln["name"]).add_to(m_draw)
@@ -234,7 +234,7 @@ with tabs[2]:
         
         # بناء الخريطة التحليلية بخلفية OpenStreetMap المعتمدة للخطوط المختار التركيز عليها
         m_net = folium.Map(location=focused_center, tiles="OpenStreetMap")
-        FullScreen().add_to(m_net)
+        Fullscreen().add_to(m_net)
         
         for e in analyzer.edges_list:
             is_selected_track = (selected_line_name == "كامل الشبكة" or e["line_name"] == selected_line_name)
