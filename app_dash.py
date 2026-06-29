@@ -710,4 +710,4 @@ with tabs[4]:
                             boq_data.append([name, f"{d['الكمية']:,.2f}", d["Unit" if "Unit" in d else "الوحدة"], f"{d['الإجمالي']:,.0f} SAR"])
                         boq_data.append(["TOTAL PROJECT BUDGET ESTIMATION", "", "", f"{result['total_cost']:,.0f} SAR"])
 
-                        boq_tbl = Table(boq_
+                        boq_tbl = Table(boq_)
