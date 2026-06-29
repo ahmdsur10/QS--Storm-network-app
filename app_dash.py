@@ -538,7 +538,7 @@ with tabs[2]:
             bnds  = get_bounds(all_c)
 
             m_net = folium.Map(location=mc, zoom_start=14, tiles="CartoDB positron")
-            FullScreen(title="ملء الشاشة").add_to(m_net)
+            Fullscreen(title="ملء الشاشة").add_to(m_net)
             MiniMap(toggle_display=True).add_to(m_net)
 
             # رسم الفروع بألوان حسب الترتيب
