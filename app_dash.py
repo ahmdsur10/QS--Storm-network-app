@@ -350,7 +350,7 @@ with tabs[1]:
             zoom = 12
 
         m_draw = folium.Map(location=map_center, zoom_start=zoom, tiles="OpenStreetMap")
-        FullScreen(title="ملء الشاشة").add_to(m_draw)
+        Fullscreen(title="ملء الشاشة").add_to(m_draw)
         MiniMap(toggle_display=True).add_to(m_draw)
 
         # رسم الخطوط الموجودة
