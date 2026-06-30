@@ -12,7 +12,7 @@ import pandas as pd
 import io
 import folium
 from streamlit_folium import st_folium
-from folium.plugins import Draw, FullScreen, MiniMap
+from folium.plugins import Draw, Fullscreen, MiniMap
 
 try:
     import geopandas as gpd
@@ -357,7 +357,7 @@ with tabs[1]:
             zoom = 12
 
         m_draw = folium.Map(location=map_center, zoom_start=zoom, tiles="OpenStreetMap")
-        FullScreen(title="ملء الشاشة").add_to(m_draw)
+        Fullscreen(title="ملء الشاشة").add_to(m_draw)
         MiniMap(toggle_display=True).add_to(m_draw)
 
         for ln in st.session_state.lines:
@@ -524,7 +524,7 @@ with tabs[2]:
 
         # الخريطة تبدأ مركّزة فعلياً على الفرع المختار (وليس فقط بإعادة ضبط الحدود لاحقاً)
         m_net = folium.Map(location=center_of(focus_c), zoom_start=16, tiles="OpenStreetMap")
-        FullScreen(title="ملء الشاشة").add_to(m_net)
+        Fullscreen(title="ملء الشاشة").add_to(m_net)
 
         for e in ana.edges_list:
             is_target = (target_focus == "كامل الشبكة" or e["line_name"] == target_focus)
@@ -697,7 +697,7 @@ with tabs[4]:
             st.markdown("""<div class="info-banner">🗺️ كروكي تفاعلي ملون حسب أقطار الأنابيب المخصصة لكل فرع.</div>""", unsafe_allow_html=True)
             all_c = [pt for ln in st.session_state.lines for pt in ln["coords"]]
             m_rep = folium.Map(location=center_of(all_c), zoom_start=14, tiles="OpenStreetMap")
-            FullScreen().add_to(m_rep)
+            Fullscreen().add_to(m_rep)
 
             diameter_legend_added = set()
             for edge_r in result["per_edge"]:
