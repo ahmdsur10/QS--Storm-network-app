@@ -716,12 +716,103 @@ with tabs[2]:
             st.markdown(f'<div class="total-row">💰 صافي تكلفة البنود الإنشائية الرأسمالية: {result["total_cost"]:,.0f} ريال سعودي</div>', unsafe_allow_html=True)
 
             with st.expander("📂 استعراض الفواتير التحليلية والكميات لكل فرع على حدة"):
+                st.markdown("""
+                <div class="info-banner">
+                ✏️ يمكنك تعديل القطر والعمق هنا مباشرة لكل فرع لزيادة الدقة — سيُعاد احتساب الكميات والتكلفة فوراً.
+                </div>
+                """, unsafe_allow_html=True)
+
+                # خريطة سريعة من اسم الفرع إلى الخط الأصلي في session_state.lines
+                line_by_name = {ln["name"]: ln for ln in st.session_state.lines}
+
                 for e in result["per_edge"]:
-                    st.markdown(f"📌 **{e['line_name']}** — مواصفات مخصصة: [ القطر: {e['diameter']} مم | العمق: {e['depth']} م | الطول: {e['length']:.1f} م ]")
+                    src_line = line_by_name.get(e["line_name"])
+
+                    st.markdown(f"📌 **{e['line_name']}** — الطول: {e['length']:.1f} م")
+
+                    ecol1, ecol2, ecol3 = st.columns([2, 2, 2])
+                    with ecol1:
+                        if src_line is not None:
+                            dia_options = sorted(PIPE_PRICES.keys())
+                            cur_dia = src_line.get("diameter", e["diameter"])
+                            new_dia = st.selectbox(
+                                "القطر (مم)", dia_options,
+                                index=dia_options.index(cur_dia) if cur_dia in dia_options else dia_options.index(600),
+                                key=f"inv_dia_{src_line['id']}"
+                            )
+                            if new_dia != cur_dia:
+                                src_line["diameter"] = new_dia
+                                st.session_state.cost = None
+                        else:
+                            st.write(f"القطر: {e['diameter']} مم")
+                    with ecol2:
+                        if src_line is not None:
+                            cur_depth = float(src_line.get("depth", e["depth"]))
+                            new_depth = st.number_input(
+                                "العمق (م)", min_value=0.5, max_value=12.0,
+                                value=cur_depth, step=0.1,
+                                key=f"inv_dep_{src_line['id']}"
+                            )
+                            if new_depth != cur_depth:
+                                src_line["depth"] = new_depth
+                                st.session_state.cost = None
+                        else:
+                            st.write(f"العمق: {e['depth']} م")
+                    with ecol3:
+                        st.metric("إجمالي تكلفة الفرع", f"{e['total']:,.0f} ريال")
+
                     df_e = pd.DataFrame([{"البند": it["البند"], "الكمية": f"{it['الكمية']:,.2f}", "الوحدة": it["الوحدة"], "سعر الوحدة": f"{it['السعر']:,}", "الإجمالي (SAR)": f"{it['الإجمالي']:,.0f}"} for it in e["items"]])
                     st.dataframe(df_e, use_container_width=True, hide_index=True)
-                    st.markdown(f"**إجمالي تكلفة هذا الفرع الفرعي بشكل مستقل: {e['total']:,.0f} ريال**")
                     st.markdown("<hr style='border-top:1px dashed #9aa4b8;'>", unsafe_allow_html=True)
+
+                if st.session_state.cost is None:
+                    st.warning("⚠️ تم تعديل بعض المواصفات — اضغط الزر أدناه لتحديث جدول الكميات والتكلفة بالكامل.")
+                    if st.button("🧮 إعادة الحساب بعد التعديل", use_container_width=True, key="recalc_from_invoice"):
+                        st.session_state.analyzer = NetworkAnalyzer(st.session_state.lines)
+                        ana2 = st.session_state.analyzer
+                        all_items2 = {}
+                        per_edge2 = []
+                        stat2 = ana2.stats()
+                        total_len2 = stat2["length"]
+
+                        for edge in ana2.edges_list:
+                            d = edge["diameter"]
+                            dep = edge["depth"]
+                            L = edge["distance"]
+                            share = L / total_len2 if total_len2 > 0 else 0
+                            n_mh = max(1, round(stat2["nodes"] * share))
+                            n_tr = num_traps(L)
+                            p_pipe = PIPE_PRICES.get(d, 725)
+
+                            items = [
+                                {"البند": "أنابيب صرف خرسانية مدعمة", "الكمية": L, "الوحدة": "متر طولي", "السعر": p_pipe, "الإجمالي": L * p_pipe},
+                                {"البند": "أعمال حفر الخنادق المفتوحة للأنابيب", "الكمية": L, "الوحدة": "متر طولي", "السعر": EXCAVATION, "الإجمالي": L * EXCAVATION},
+                                {"البند": "مناهل تفتيش خرسانية دائرية معتمدة", "الكمية": n_mh, "الوحدة": "عدد", "السعر": MANHOLE_PRICE, "الإجمالي": n_mh * MANHOLE_PRICE},
+                                {"البند": "مصائد رمل وحطام جغرافية", "الكمية": n_tr, "الوحدة": "عدد", "السعر": TRAP_PRICE, "الإجمالي": n_tr * TRAP_PRICE},
+                                {"البند": "إعادة الردم والتسوية والدمك الإنشائي للمسار", "الكمية": L * dep, "الوحدة": "متر مكعب", "السعر": BACKFILL_PRICE, "الإجمالي": L * dep * BACKFILL_PRICE},
+                            ]
+
+                            total = sum(it["الإجمالي"] for it in items)
+                            per_edge2.append({
+                                "line_name": edge["line_name"], "diameter": d, "depth": dep, "length": L,
+                                "items": items, "total": total, "n_manholes": n_mh, "n_traps": n_tr,
+                                "start_coord": edge["start_coord"], "end_coord": edge["end_coord"]
+                            })
+
+                            for it in items:
+                                k = it["البند"]
+                                if k not in all_items2:
+                                    all_items2[k] = {"الكمية": 0, "الإجمالي": 0, "الوحدة": it["الوحدة"]}
+                                all_items2[k]["الكمية"] += it["الكمية"]
+                                all_items2[k]["الإجمالي"] += it["الإجمالي"]
+
+                        st.session_state.cost = {
+                            "per_edge": per_edge2, "all_items": all_items2,
+                            "total_cost": sum(v["الإجمالي"] for v in all_items2.values()),
+                            "stat": stat2, "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M")
+                        }
+                        st.success("✅ تم تحديث الكميات والتكلفة بالمواصفات الجديدة!")
+                        st.rerun()
 
             st.markdown("#### 📋 قائمة فروع الشبكة المحللة")
             rows = [{"اسم الفرع الهيدروليكي": e["line_name"], "طول الفرع (م)": f"{e['distance']:.2f}", "منهل البداية": f"منهل #{e['node_start']}", "منهل النهاية": f"منهل #{e['node_end']}"} for e in ana.edges_list]
