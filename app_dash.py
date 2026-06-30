@@ -12,7 +12,7 @@ import pandas as pd
 import io
 import folium
 from streamlit_folium import st_folium
-from folium.plugins import Draw, Fullscreen, MiniMap
+from folium.plugins import Draw, FullScreen, MiniMap
 
 try:
     import geopandas as gpd
@@ -25,6 +25,55 @@ try:
     STATICMAP_AVAILABLE = True
 except Exception:
     STATICMAP_AVAILABLE = False
+
+# ─────────────────────────────────────────────────────────────────────────────
+# دعم اللغة العربية في تقرير PDF (تشكيل الحروف + اتجاه RTL + خط Amiri)
+# ─────────────────────────────────────────────────────────────────────────────
+import os as _os
+try:
+    import arabic_reshaper
+    from bidi.algorithm import get_display
+    ARABIC_SHAPING_AVAILABLE = True
+except Exception:
+    ARABIC_SHAPING_AVAILABLE = False
+
+_FONT_DIR = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "assets", "fonts")
+ARABIC_FONT_REGULAR = "Amiri"
+ARABIC_FONT_BOLD = "Amiri-Bold"
+ARABIC_FONT_AVAILABLE = False
+
+def register_arabic_fonts():
+    """يسجّل خط Amiri (عادي وغامق) لدى ReportLab لدعم رسم النصوص العربية بشكل صحيح."""
+    global ARABIC_FONT_AVAILABLE
+    try:
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
+        reg_path = _os.path.join(_FONT_DIR, "Amiri-Regular.ttf")
+        bold_path = _os.path.join(_FONT_DIR, "Amiri-Bold.ttf")
+        if _os.path.exists(reg_path) and _os.path.exists(bold_path):
+            pdfmetrics.registerFont(TTFont(ARABIC_FONT_REGULAR, reg_path))
+            pdfmetrics.registerFont(TTFont(ARABIC_FONT_BOLD, bold_path))
+            ARABIC_FONT_AVAILABLE = True
+        else:
+            ARABIC_FONT_AVAILABLE = False
+    except Exception:
+        ARABIC_FONT_AVAILABLE = False
+    return ARABIC_FONT_AVAILABLE
+
+def ar(text):
+    """
+    يحوّل أي نص عربي (أو مختلط) إلى الصيغة الصحيحة للعرض في PDF:
+    تشكيل اتصال الحروف العربية (reshaping) ثم ترتيب الاتجاه البصري (bidi).
+    الأرقام والنصوص الإنجليزية تبقى دون تأثير.
+    """
+    text = str(text)
+    if not ARABIC_SHAPING_AVAILABLE:
+        return text
+    try:
+        reshaped = arabic_reshaper.reshape(text)
+        return get_display(reshaped)
+    except Exception:
+        return text
 
 # ─────────────────────────────────────────────────────────────────────────────
 # إعداد الصفحة
@@ -286,10 +335,9 @@ for key, val in [("lines", []), ("analyzer", None), ("cost", None)]:
 # ─────────────────────────────────────────────────────────────────────────────
 TAB_LABELS = [
     "🏠 الرئيسية",
-    "🗺️ ١ · رسم وإدخل",
-    "🌐 ٢ · تحليل الشبكة",
-    "💰 ٣ · التكاليف وحساب الكميات",
-    "📋 ٤ · التقرير والطباعة",
+    "🗺️ ١ · رسم وإدخال",
+    "🌐 ٢ · التحليل والتكاليف",
+    "📋 ٣ · التقرير والطباعة",
 ]
 tabs = st.tabs(TAB_LABELS)
 
@@ -297,14 +345,13 @@ tabs = st.tabs(TAB_LABELS)
 with tabs[0]:
     st.markdown("<div class='section-title'>خطوات استخدام التطبيق</div>", unsafe_allow_html=True)
 
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3 = st.columns(3)
     steps = [
-        ("🗺️", "١ · رسم وإدخل", "ارسم خطوط الشبكة مباشرة على الخريطة أو استورد ملفات GeoJSON / Shapefile"),
-        ("🌐", "٢ · تحليل الشبكة", "حلل المناهل والفروع والأطوال واعرضها على خريطة تفاعلية ملونة"),
-        ("💰", "٣ · التكاليف", "أدخل قطر وعمق كل فرع بشكل مستقل ثم احسب كميات التربة والأنابيب والتكلفة الكلية للمشروع"),
-        ("📋", "٤ · التقرير", "تصدير تقرير PDF كامل مع الخريطة وجداول الكميات والتكاليف"),
+        ("🗺️", "١ · رسم وإدخال", "ارسم خطوط الشبكة مباشرة على الخريطة أو استورد ملفات GeoJSON / Shapefile"),
+        ("🌐", "٢ · التحليل والتكاليف", "حلل المناهل والفروع، حدّد قطر وعمق مختلف لكل فرع، واحسب الكميات والتكلفة فوراً في نفس المكان"),
+        ("📋", "٣ · التقرير", "تصدير تقرير PDF عربي كامل مع خريطة OpenStreetMap وجداول الكميات والتكاليف"),
     ]
-    for col, (icon, title, desc) in zip([c1, c2, c3, c4], steps):
+    for col, (icon, title, desc) in zip([c1, c2, c3], steps):
         with col:
             st.markdown(f"""
             <div class="step-card">
@@ -357,7 +404,7 @@ with tabs[1]:
             zoom = 12
 
         m_draw = folium.Map(location=map_center, zoom_start=zoom, tiles="OpenStreetMap")
-        Fullscreen(title="ملء الشاشة").add_to(m_draw)
+        FullScreen(title="ملء الشاشة").add_to(m_draw)
         MiniMap(toggle_display=True).add_to(m_draw)
 
         for ln in st.session_state.lines:
@@ -485,17 +532,17 @@ with tabs[1]:
 
 # التبويب 2: تحليل الشبكة
 with tabs[2]:
-    st.markdown("<div class='section-title'>🌐 تحليل هندسة الشبكة والعقد والتركيز الموجه</div>", unsafe_allow_html=True)
+    st.markdown("<div class='section-title'>🌐 تحليل الشبكة والتكاليف</div>", unsafe_allow_html=True)
 
     if not st.session_state.lines:
         st.warning("⚠️ يرجى إضافة ورسم مسارات خطوط أولاً من التبويب السابق.")
     else:
-        if st.button("🔍 إجراء تحليل ومحاكاة الشبكة الحالية", use_container_width=True) or st.session_state.analyzer is None:
-            st.session_state.analyzer = NetworkAnalyzer(st.session_state.lines)
-
+        # تحليل تلقائي للشبكة عند أي تغيير في الخطوط
+        st.session_state.analyzer = NetworkAnalyzer(st.session_state.lines)
         ana = st.session_state.analyzer
         stat = ana.stats()
 
+        # ── مؤشرات الشبكة العامة ──────────────────────────────────────────
         k1, k2, k3, k4 = st.columns(4)
         for col, val, lbl in zip(
             [k1, k2, k3, k4],
@@ -505,6 +552,9 @@ with tabs[2]:
             with col:
                 st.markdown(f'<div class="kpi-card"><div class="kpi-value">{val}</div><div class="kpi-label">{lbl}</div></div>', unsafe_allow_html=True)
 
+        st.markdown("---")
+
+        # ── خريطة تحليلية مع تكبير على فرع مختار ──────────────────────────
         st.markdown("#### 🔍 تحديد فرع لعمل تكبير (Zoom) تلقائي عليه")
         line_names = [ln["name"] for ln in st.session_state.lines]
         target_focus = st.selectbox(
@@ -516,26 +566,23 @@ with tabs[2]:
         st.markdown("#### 🗺️ خريطة الفروع والعقد الهندسية")
 
         full_c = [pt for ln in st.session_state.lines for pt in ln["coords"]]
-
         if target_focus == "كامل الشبكة":
             focus_c = full_c
         else:
             focus_c = next(ln["coords"] for ln in st.session_state.lines if ln["name"] == target_focus)
 
-        # الخريطة تبدأ مركّزة فعلياً على الفرع المختار (وليس فقط بإعادة ضبط الحدود لاحقاً)
         m_net = folium.Map(location=center_of(focus_c), zoom_start=16, tiles="OpenStreetMap")
-        Fullscreen(title="ملء الشاشة").add_to(m_net)
+        FullScreen(title="ملء الشاشة").add_to(m_net)
 
         for e in ana.edges_list:
             is_target = (target_focus == "كامل الشبكة" or e["line_name"] == target_focus)
             weight_render  = 8 if is_target else 4
             opacity_render = 1.0 if is_target else 0.35
             color_render   = "#e63946" if (is_target and target_focus != "كامل الشبكة") else "#1a5fa8"
-
             folium.PolyLine(
                 [e["start_coord"], e["end_coord"]],
                 color=color_render, weight=weight_render, opacity=opacity_render,
-                tooltip=f"{e['line_name']} — {e['distance']:.1f} م"
+                tooltip=f"{e['line_name']} — Ø{e['diameter']}مم — {e['distance']:.1f} م"
             ).add_to(m_net)
 
         for coord, nid in ana.nodes_coords.items():
@@ -545,32 +592,21 @@ with tabs[2]:
                 tooltip=f"منهل #{nid}"
             ).add_to(m_net)
 
-        # الزوم/التركيز يتم حصراً على حدود الفرع المختار (وليس الشبكة كاملة)
         m_net.fit_bounds(get_bounds(focus_c), max_zoom=18)
         st_folium(m_net, width=None, height=550, key=f"analysis_map_{target_focus}")
 
-        st.markdown("#### 📋 قائمة فروع الشبكة المحللة")
-        rows = [{"اسم الفرع الهيدروليكي": e["line_name"], "طول الفرع (م)": f"{e['distance']:.2f}", "منهل البداية": f"منهل #{e['node_start']}", "منهل النهاية": f"منهل #{e['node_end']}"} for e in ana.edges_list]
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        st.markdown("---")
 
-# التبويب 3: التكاليف وحساب الكميات
-with tabs[3]:
-    st.markdown("<div class='section-title'>💰 لوحة التحكم في مواصفات الفروع وجدول الكميات</div>", unsafe_allow_html=True)
-
-    if not st.session_state.lines:
-        st.warning("⚠️ يرجى رسم وإدخال خطوط الشبكة أولاً.")
-    else:
-        st.session_state.analyzer = NetworkAnalyzer(st.session_state.lines)
-        ana = st.session_state.analyzer
-
+        # ── إعداد كل فرع بشكل مستقل (القطر، العمق) ────────────────────────
+        st.markdown("#### ⚙️ مواصفات كل فرع (القطر والعمق)")
         st.markdown("""
         <div class="info-banner">
-            ⚙️ يمكنك تحديد <b>اسم الفرع، القطر (مم)، والعمق (م)</b> بشكل مستقل لكل فرع أدناه، ثم الضغط على <b>"🧮 حساب وتحديث جدول كميات المشروع"</b> لتوليد الفواتير والجداول فوراً.
+            📌 حدّد <b>اسم الفرع، القطر (مم)، والعمق (م)</b> بشكل مستقل لكل فرع — يتم احتساب الكميات والتكلفة تلقائياً فور أي تعديل.
         </div>
         """, unsafe_allow_html=True)
 
         hc = st.columns([0.5, 2.5, 1.5, 2, 2])
-        headers = ["#", "اسم الفرع", "الطول (م)", "القطر الاختياري (مم)", "العمق الاختياري (م)"]
+        headers = ["#", "اسم الفرع", "الطول (م)", "القطر (مم)", "العمق (م)"]
         for col, txt in zip(hc, headers):
             col.markdown(f"**{txt}**")
         st.markdown("<hr style='margin:8px 0;'>", unsafe_allow_html=True)
@@ -578,14 +614,14 @@ with tabs[3]:
         for idx, line in enumerate(st.session_state.lines):
             cols = st.columns([0.5, 2.5, 1.5, 2, 2])
             cols[0].write(f"**{idx+1}**")
-            
+
             new_name = cols[1].text_input("الاسم", value=line["name"], key=f"cost_name_{line['id']}", label_visibility="collapsed")
             if new_name != line["name"]:
                 st.session_state.lines[idx]["name"] = new_name
-                st.session_state.cost = None 
-            
+                st.session_state.cost = None
+
             cols[2].write(f"{line['length']:.1f} م")
-            
+
             current_dia = line.get("diameter", 600)
             dia_options = sorted(PIPE_PRICES.keys())
             selected_dia = cols[3].selectbox(
@@ -608,10 +644,13 @@ with tabs[3]:
 
         st.markdown("---")
 
-        if st.button("🧮 حساب وتحديث جدول كميات المشروع بالكامل", use_container_width=True):
+        recalc = st.button("🧮 حساب وتحديث جدول كميات المشروع بالكامل", use_container_width=True)
+
+        # إعادة الحساب تلقائياً إذا تغيّرت أي مواصفة، أو عند الضغط الصريح على الزر
+        if recalc or st.session_state.cost is None:
             st.session_state.analyzer = NetworkAnalyzer(st.session_state.lines)
             ana = st.session_state.analyzer
-            
+
             all_items = {}
             per_edge = []
             stat = ana.stats()
@@ -653,9 +692,11 @@ with tabs[3]:
                 "total_cost": sum(v["الإجمالي"] for v in all_items.values()),
                 "stat": stat, "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M")
             }
-            st.success("✅ تم تحديث كشوفات التكلفة وحساب الكميات الهندسية بنجاح!")
-            st.rerun()
+            if recalc:
+                st.success("✅ تم تحديث كشوفات التكلفة وحساب الكميات الهندسية بنجاح!")
+                st.rerun()
 
+        # ── عرض نتائج التكاليف ─────────────────────────────────────────────
         if st.session_state.cost:
             result = st.session_state.cost
             st.markdown("### 📊 كشف حساب وجدول كميات المشروع المعتمد")
@@ -663,7 +704,7 @@ with tabs[3]:
             k1, k2, k3, k4 = st.columns(4)
             t_mh = sum(e["n_manholes"] for e in result["per_edge"])
             t_tr = sum(e["n_traps"] for e in result["per_edge"])
-            
+
             k1.markdown(f'<div class="kpi-card"><div class="kpi-value">{t_mh}</div><div class="kpi-label">المناهل الكلية</div></div>', unsafe_allow_html=True)
             k2.markdown(f'<div class="kpi-card"><div class="kpi-value">{t_tr}</div><div class="kpi-label">مصائد الحطام</div></div>', unsafe_allow_html=True)
             k3.markdown(f'<div class="kpi-card"><div class="kpi-value">{len(result["per_edge"])}</div><div class="kpi-label">عدد مسارات الفروع</div></div>', unsafe_allow_html=True)
@@ -682,8 +723,12 @@ with tabs[3]:
                     st.markdown(f"**إجمالي تكلفة هذا الفرع الفرعي بشكل مستقل: {e['total']:,.0f} ريال**")
                     st.markdown("<hr style='border-top:1px dashed #9aa4b8;'>", unsafe_allow_html=True)
 
-# التبويب 4: التقرير والطباعة
-with tabs[4]:
+            st.markdown("#### 📋 قائمة فروع الشبكة المحللة")
+            rows = [{"اسم الفرع الهيدروليكي": e["line_name"], "طول الفرع (م)": f"{e['distance']:.2f}", "منهل البداية": f"منهل #{e['node_start']}", "منهل النهاية": f"منهل #{e['node_end']}"} for e in ana.edges_list]
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+# التبويب 3: التقرير والطباعة
+with tabs[3]:
     st.markdown("<div class='section-title'>📋 تصدير التقارير الفنية وطباعة PDF</div>", unsafe_allow_html=True)
 
     if not st.session_state.cost:
@@ -697,7 +742,7 @@ with tabs[4]:
             st.markdown("""<div class="info-banner">🗺️ كروكي تفاعلي ملون حسب أقطار الأنابيب المخصصة لكل فرع.</div>""", unsafe_allow_html=True)
             all_c = [pt for ln in st.session_state.lines for pt in ln["coords"]]
             m_rep = folium.Map(location=center_of(all_c), zoom_start=14, tiles="OpenStreetMap")
-            Fullscreen().add_to(m_rep)
+            FullScreen().add_to(m_rep)
 
             diameter_legend_added = set()
             for edge_r in result["per_edge"]:
@@ -744,28 +789,67 @@ with tabs[4]:
                         from reportlab.lib.units import mm
                         from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, HRFlowable, PageBreak, Image
                         from reportlab.lib.styles import ParagraphStyle
-                        from reportlab.lib.enums import TA_CENTER
+                        from reportlab.lib.enums import TA_CENTER, TA_RIGHT
+
+                        # تسجيل خط Amiri العربي (يدعم التشكيل والاتصال الصحيح للحروف)
+                        font_ok = register_arabic_fonts()
+                        if not font_ok:
+                            st.warning("⚠️ تعذّر تحميل خط Amiri العربي — سيتم استخدام خط افتراضي قد لا يعرض العربية بشكل صحيح.")
+                        FONT_REG  = ARABIC_FONT_REGULAR if font_ok else "Helvetica"
+                        FONT_BOLD = ARABIC_FONT_BOLD if font_ok else "Helvetica-Bold"
 
                         buf = io.BytesIO()
                         doc = SimpleDocTemplate(buf, pagesize=landscape(A4), rightMargin=15*mm, leftMargin=15*mm, topMargin=15*mm, bottomMargin=15*mm)
 
                         BLUE, LBLUE, GREY, WHITE = colors.HexColor("#0a2a5e"), colors.HexColor("#1a5fa8"), colors.HexColor("#f0f4f8"), colors.white
-                        s_title = ParagraphStyle("title", fontName="Helvetica-Bold", fontSize=20, textColor=WHITE, alignment=TA_CENTER)
-                        s_h2 = ParagraphStyle("h2", fontName="Helvetica-Bold", fontSize=13, textColor=BLUE, spaceBefore=10, spaceAfter=6)
-                        s_norm = ParagraphStyle("n", fontName="Helvetica", fontSize=10)
-                        s_footer = ParagraphStyle("f", fontName="Helvetica", fontSize=8, textColor=colors.grey, alignment=TA_CENTER)
+
+                        s_title = ParagraphStyle("title", fontName=FONT_BOLD, fontSize=20, textColor=WHITE, alignment=TA_CENTER, leading=26)
+                        s_h2    = ParagraphStyle("h2", fontName=FONT_BOLD, fontSize=14, textColor=BLUE, alignment=TA_RIGHT, spaceBefore=10, spaceAfter=6, leading=20)
+                        s_norm  = ParagraphStyle("n", fontName=FONT_REG, fontSize=10, alignment=TA_RIGHT, leading=15)
+                        s_cell  = ParagraphStyle("cell", fontName=FONT_REG, fontSize=9.5, alignment=TA_RIGHT, leading=14)
+                        s_cell_b= ParagraphStyle("cellb", fontName=FONT_BOLD, fontSize=9.5, textColor=WHITE, alignment=TA_CENTER, leading=14)
+                        s_cell_c= ParagraphStyle("cellc", fontName=FONT_REG, fontSize=9.5, alignment=TA_CENTER, leading=14)
+                        s_footer= ParagraphStyle("f", fontName=FONT_REG, fontSize=8, textColor=colors.grey, alignment=TA_CENTER)
+
+                        def P(text, style=s_cell):
+                            """فقرة بنص عربي مُشكَّل بشكل صحيح."""
+                            return Paragraph(ar(text), style)
 
                         elems = []
-                        elems.append(Table([[Paragraph(f"FLOOD INFRASTRUCTURE ENGINEERING REPORT<br/><font size=11>{proj_name}</font>", s_title)]], colWidths=[265*mm], style=[('BACKGROUND', (0,0), (-1,-1), BLUE), ('PADDING', (0,0), (-1,-1), 15), ('ROUNDEDCORNERS', (0,0), (-1,-1), [6,6,6,6])]))
+
+                        # ── غلاف التقرير ──────────────────────────────────
+                        elems.append(Table(
+                            [[Paragraph(f"{ar(proj_name)}<br/><font size=11>{ar('تقرير هندسي - شبكة صرف سيول')}</font>", s_title)]],
+                            colWidths=[265*mm],
+                            style=[
+                                ('BACKGROUND', (0,0), (-1,-1), BLUE),
+                                ('PADDING', (0,0), (-1,-1), 15),
+                                ('ROUNDEDCORNERS', (0,0), (-1,-1), [6,6,6,6]),
+                            ]
+                        ))
                         elems.append(Spacer(1, 6*mm))
 
-                        info_data = [["Project Client / Owner:", proj_owner, "Calculation Timestamp:", result["generated_at"]], ["Lead Reviewing Engineer:", engineer or "Engineering Dept", "System Engine Version:", "v14.0 المطور"]]
-                        info_tbl = Table(info_data, colWidths=[55*mm, 75*mm, 45*mm, 90*mm], style=[('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#d0d8e8")), ('BACKGROUND', (0,0), (0,-1), GREY), ('BACKGROUND', (2,0), (2,-1), GREY), ('PADDING', (0,0), (-1,-1), 6)])
+                        # ── معلومات المشروع ───────────────────────────────
+                        info_data = [
+                            [P("الجهة المالكة:"), P(proj_owner), P("تاريخ الإصدار:"), P(result["generated_at"])],
+                            [P("المهندس المسؤول:"), P(engineer or "—"), P("إصدار النظام:"), P("الإصدار 15.0")],
+                        ]
+                        info_tbl = Table(
+                            info_data, colWidths=[45*mm, 90*mm, 40*mm, 90*mm],
+                            style=[
+                                ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#d0d8e8")),
+                                ('BACKGROUND', (0,0), (0,-1), GREY),
+                                ('BACKGROUND', (2,0), (2,-1), GREY),
+                                ('PADDING', (0,0), (-1,-1), 6),
+                                ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+                            ]
+                        )
                         elems.append(info_tbl)
                         elems.append(Spacer(1, 6*mm))
 
+                        # ── خريطة الشبكة بخلفية OpenStreetMap ─────────────
                         if uploaded_map_img:
-                            elems.append(Paragraph("GEOGRAPHICAL INFRASTRUCTURE ROUTE LAYOUT", s_h2))
+                            elems.append(P("مخطط مسارات الشبكة الجغرافي", s_h2))
                             elems.append(HRFlowable(width="100%", thickness=1, color=BLUE, spaceAfter=4))
                             elems.append(Image(uploaded_map_img, width=260*mm, height=120*mm))
                             elems.append(PageBreak())
@@ -775,61 +859,107 @@ with tabs[4]:
                                 width=1600, height=850,
                             )
                             if map_png_bytes:
-                                elems.append(Paragraph("GEOGRAPHICAL INFRASTRUCTURE ROUTE LAYOUT (OpenStreetMap)", s_h2))
+                                elems.append(P("مخطط مسارات الشبكة الجغرافي (خلفية OpenStreetMap)", s_h2))
                                 elems.append(HRFlowable(width="100%", thickness=1, color=BLUE, spaceAfter=4))
                                 elems.append(Image(io.BytesIO(map_png_bytes), width=260*mm, height=138*mm))
 
-                                # مفتاح الأقطار أسفل الخريطة
                                 legend_used = sorted({e["diameter"] for e in result["per_edge"]})
-                                legend_row = [Paragraph(
-                                    "  &nbsp;&nbsp; ".join(
-                                        f'<font color="{PIPE_COLORS.get(d,"#1a5fa8")}">■</font> Ø{d} مم'
-                                        for d in legend_used
-                                    ) + '  &nbsp;&nbsp; <font color="#e63946">●</font> منهل تفتيش',
-                                    s_norm
-                                )]
+                                legend_text = "   ".join(
+                                    f'<font color="{PIPE_COLORS.get(d,"#1a5fa8")}">■</font> Ø{d} {ar("مم")}'
+                                    for d in legend_used
+                                ) + f'   <font color="#e63946">●</font> {ar("منهل تفتيش")}'
                                 elems.append(Spacer(1, 2*mm))
-                                elems.append(Table([legend_row], colWidths=[260*mm]))
+                                elems.append(Table([[Paragraph(legend_text, s_norm)]], colWidths=[260*mm]))
                                 elems.append(PageBreak())
                             else:
-                                elems.append(Paragraph(
+                                elems.append(P(
                                     "⚠ تعذّر توليد خريطة OpenStreetMap تلقائياً (لا يوجد اتصال بخوادم البلاطات في هذه البيئة). "
                                     "يمكنك إيقاف خيار التوليد التلقائي ورفع لقطة شاشة بديلة.",
                                     s_norm
                                 ))
                                 elems.append(Spacer(1, 6*mm))
 
-                        elems.append(Paragraph("1. DIRECT COST INFRASTRUCTURE BILL OF QUANTITIES (BOQ)", s_h2))
-                        boq_data = [["Item Description Specification", "Calculated Qty", "Unit", "Total (SAR)"]]
+                        # ── جدول الكميات الإجمالي ─────────────────────────
+                        elems.append(P("جدول الكميات والتكاليف الإجمالي للمشروع — أولاً", s_h2))
+                        boq_header = [P("البند", s_cell_b), P("الكمية", s_cell_b), P("الوحدة", s_cell_b), P("الإجمالي (ريال)", s_cell_b)]
+                        boq_data = [boq_header]
                         for name, d in result["all_items"].items():
-                            boq_data.append([name, f"{d['الكمية']:,.2f}", d.get("الوحدة", "Unit"), f"{d['الإجمالي']:,.0f} SAR"])
-                        boq_data.append(["TOTAL PROJECT BUDGET ESTIMATION", "", "", f"{result['total_cost']:,.0f} SAR"])
+                            boq_data.append([
+                                P(name),
+                                P(f"{d['الكمية']:,.2f}", s_cell_c),
+                                P(d.get("الوحدة", ""), s_cell_c),
+                                P(f"{d['الإجمالي']:,.0f}", s_cell_c),
+                            ])
+                        boq_data.append([
+                            P("الإجمالي الكلي للمشروع", ParagraphStyle("totlbl", fontName=FONT_BOLD, fontSize=11, textColor=WHITE, alignment=TA_RIGHT)),
+                            Paragraph("", s_cell_c), Paragraph("", s_cell_c),
+                            P(f"{result['total_cost']:,.0f}", ParagraphStyle("totval", fontName=FONT_BOLD, fontSize=11, textColor=WHITE, alignment=TA_CENTER)),
+                        ])
 
-                        boq_tbl = Table(boq_data, colWidths=[110*mm, 40*mm, 35*mm, 80*mm], style=[('BACKGROUND', (0,0), (-1,0), LBLUE), ('TEXTCOLOR', (0,0), (-1,0), WHITE), ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#d0d8e8")), ('PADDING', (0,0), (-1,-1), 6), ('BACKGROUND', (0,-1), (-1,-1), BLUE), ('TEXTCOLOR', (0,-1), (-1,-1), WHITE), ('FONTNAME', (0,-1), (-1,-1), "Helvetica-Bold")])
+                        boq_tbl = Table(boq_data, colWidths=[110*mm, 50*mm, 35*mm, 70*mm], repeatRows=1)
+                        boq_tbl.setStyle(TableStyle([
+                            ('BACKGROUND', (0,0), (-1,0), LBLUE),
+                            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#d0d8e8")),
+                            ('ROWBACKGROUNDS', (0,1), (-1,-2), [WHITE, GREY]),
+                            ('PADDING', (0,0), (-1,-1), 6),
+                            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+                            ('BACKGROUND', (0,-1), (-1,-1), BLUE),
+                            ('SPAN', (1,-1), (2,-1)),
+                        ]))
                         elems.append(boq_tbl)
-
                         elems.append(PageBreak())
-                        elems.append(Paragraph("2. INDIVIDUAL STORM SEGMENTS TECHNICAL PARAMETERS & SPECIFICATIONS", s_h2))
-                        branch_data = [["Segment ID", "Length (m)", "Assigned Diameter (mm)", "Assigned Excavation Depth (m)", "Manholes", "Traps", "Subtotal Cost"]]
-                        for e in result["per_edge"]:
-                            branch_data.append([e["line_name"], f"{e['length']:.1f}", str(e["diameter"]), str(e["depth"]), str(e["n_manholes"]), str(e["n_traps"]), f"{e['total']:,.0f} SAR"])
 
-                        br_tbl = Table(branch_data, colWidths=[55*mm, 30*mm, 45*mm, 50*mm, 25*mm, 20*mm, 40*mm], style=[('BACKGROUND', (0,0), (-1,0), LBLUE), ('TEXTCOLOR', (0,0), (-1,0), WHITE), ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#d0d8e8")), ('PADDING', (0,0), (-1,-1), 5), ('ALIGN', (1,0), (-1,-1), "CENTER")])
+                        # ── جدول تفاصيل كل فرع ─────────────────────────────
+                        elems.append(P("المواصفات الفنية لكل فرع على حدة — ثانياً", s_h2))
+                        branch_header = [
+                            P("اسم الفرع", s_cell_b), P("الطول (م)", s_cell_b),
+                            P("القطر (مم)", s_cell_b), P("العمق (م)", s_cell_b),
+                            P("المناهل", s_cell_b), P("المصائد", s_cell_b),
+                            P("التكلفة (ريال)", s_cell_b),
+                        ]
+                        branch_data = [branch_header]
+                        for e in result["per_edge"]:
+                            branch_data.append([
+                                P(e["line_name"]),
+                                P(f"{e['length']:.1f}", s_cell_c),
+                                P(str(e["diameter"]), s_cell_c),
+                                P(str(e["depth"]), s_cell_c),
+                                P(str(e["n_manholes"]), s_cell_c),
+                                P(str(e["n_traps"]), s_cell_c),
+                                P(f"{e['total']:,.0f}", s_cell_c),
+                            ])
+
+                        br_tbl = Table(
+                            branch_data,
+                            colWidths=[55*mm, 30*mm, 30*mm, 30*mm, 25*mm, 25*mm, 45*mm],
+                            repeatRows=1,
+                        )
+                        br_tbl.setStyle(TableStyle([
+                            ('BACKGROUND', (0,0), (-1,0), LBLUE),
+                            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#d0d8e8")),
+                            ('ROWBACKGROUNDS', (0,1), (-1,-1), [WHITE, GREY]),
+                            ('PADDING', (0,0), (-1,-1), 5),
+                            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+                        ]))
                         elems.append(br_tbl)
-                        
+
                         elems.append(Spacer(1, 10*mm))
                         elems.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#d0d8e8")))
-                        elems.append(Paragraph(f"Stormwater Infrastructure Analysis Solution Suite  | Report Generated: {result['generated_at']}", s_footer))
+                        elems.append(P(f"محلل شبكات السيول | تاريخ إصدار التقرير: {result['generated_at']}", s_footer))
 
                         doc.build(elems)
                         buf.seek(0)
 
                         st.download_button(
                             label="📥 اضغط هنا لبدء تحميل ملف التقرير الهندسي PDF المعتمد", data=buf.getvalue(),
-                            file_name=f"Stormwater_Network_BOQ_Report.pdf", mime="application/pdf", use_container_width=True
+                            file_name=f"تقرير_شبكة_السيول_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                            mime="application/pdf", use_container_width=True
                         )
+                        st.success("✅ تم إنشاء التقرير بنجاح بخط عربي سليم — اضغط الزر أعلاه للتحميل.")
                     except Exception as ex:
                         st.error(f"❌ خطأ أثناء صياغة مستند الـ PDF: {ex}")
+                        import traceback
+                        st.text(traceback.format_exc())
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Footer
