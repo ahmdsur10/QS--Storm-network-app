@@ -12,13 +12,19 @@ import pandas as pd
 import io
 import folium
 from streamlit_folium import st_folium
-from folium.plugins import Draw, Fullscreen, MiniMap
+from folium.plugins import Draw, FullScreen, MiniMap
 
 try:
     import geopandas as gpd
     GEOPANDAS_AVAILABLE = True
 except Exception:
     GEOPANDAS_AVAILABLE = False
+
+try:
+    from staticmap import StaticMap, Line as SMLine, CircleMarker as SMCircle
+    STATICMAP_AVAILABLE = True
+except Exception:
+    STATICMAP_AVAILABLE = False
 
 # ─────────────────────────────────────────────────────────────────────────────
 # إعداد الصفحة
@@ -182,6 +188,43 @@ def center_of(coords):
     lons = [c[1] for c in coords]
     return [(min(lats)+max(lats))/2, (min(lons)+max(lons))/2]
 
+def render_osm_static_map(per_edge, nodes_coords, pipe_colors, width=1400, height=750):
+    """
+    يولّد صورة PNG لخريطة الشبكة بخلفية بلاطات OpenStreetMap الحقيقية،
+    مع تلوين كل فرع حسب القطر ورسم المناهل، لتُضمَّن مباشرة داخل تقرير PDF.
+    يعيد bytes الصورة (PNG) أو None إذا تعذّر الاتصال بخوادم البلاطات.
+    """
+    if not STATICMAP_AVAILABLE:
+        return None
+    try:
+        m = StaticMap(
+            width, height,
+            url_template="https://a.tile.openstreetmap.org/{z}/{x}/{y}.png",
+            headers={"User-Agent": "FloodNetworkAnalyzer/1.0 (engineering report generator)"},
+        )
+
+        for e in per_edge:
+            d = e["diameter"]
+            hex_color = pipe_colors.get(d, "#1a5fa8")
+            # staticmap يستقبل الإحداثيات بصيغة (lon, lat)
+            coords_lonlat = [
+                (e["start_coord"][1], e["start_coord"][0]),
+                (e["end_coord"][1], e["end_coord"][0]),
+            ]
+            m.add_line(SMLine(coords_lonlat, hex_color, 5))
+
+        for coord in nodes_coords.keys():
+            m.add_marker(SMCircle((coord[1], coord[0]), "#e63946", 10))
+            m.add_marker(SMCircle((coord[1], coord[0]), "#0a2a5e", 4))
+
+        img = m.render()
+        out = io.BytesIO()
+        img.save(out, format="PNG")
+        out.seek(0)
+        return out.getvalue()
+    except Exception:
+        return None
+
 # ─────────────────────────────────────────────────────────────────────────────
 # محلل الشبكة
 # ─────────────────────────────────────────────────────────────────────────────
@@ -314,7 +357,7 @@ with tabs[1]:
             zoom = 12
 
         m_draw = folium.Map(location=map_center, zoom_start=zoom, tiles="OpenStreetMap")
-        Fullscreen(title="ملء الشاشة").add_to(m_draw)
+        FullScreen(title="ملء الشاشة").add_to(m_draw)
         MiniMap(toggle_display=True).add_to(m_draw)
 
         for ln in st.session_state.lines:
@@ -464,30 +507,47 @@ with tabs[2]:
 
         st.markdown("#### 🔍 تحديد فرع لعمل تكبير (Zoom) تلقائي عليه")
         line_names = [ln["name"] for ln in st.session_state.lines]
-        target_focus = st.selectbox("اختر الخط المراد عمل التكبير والتركيز المباشر عليه:", ["كامل الشبكة"] + line_names)
+        target_focus = st.selectbox(
+            "اختر الخط المراد عمل التكبير والتركيز المباشر عليه:",
+            ["كامل الشبكة"] + line_names,
+            key="analysis_focus_select",
+        )
 
         st.markdown("#### 🗺️ خريطة الفروع والعقد الهندسية")
-        
-        if target_focus == "كامل الشبكة":
-            all_c = [pt for ln in st.session_state.lines for pt in ln["coords"]]
-        else:
-            all_c = next(ln["coords"] for ln in st.session_state.lines if ln["name"] == target_focus)
 
-        m_net = folium.Map(location=center_of(all_c), zoom_start=14, tiles="OpenStreetMap")
-        Fullscreen().add_to(m_net)
+        full_c = [pt for ln in st.session_state.lines for pt in ln["coords"]]
+
+        if target_focus == "كامل الشبكة":
+            focus_c = full_c
+        else:
+            focus_c = next(ln["coords"] for ln in st.session_state.lines if ln["name"] == target_focus)
+
+        # الخريطة تبدأ مركّزة فعلياً على الفرع المختار (وليس فقط بإعادة ضبط الحدود لاحقاً)
+        m_net = folium.Map(location=center_of(focus_c), zoom_start=16, tiles="OpenStreetMap")
+        FullScreen(title="ملء الشاشة").add_to(m_net)
 
         for e in ana.edges_list:
             is_target = (target_focus == "كامل الشبكة" or e["line_name"] == target_focus)
-            weight_render = 8 if is_target else 4
-            opacity_render = 1.0 if is_target else 0.4
-            
-            folium.PolyLine([e["start_coord"], e["end_coord"]], color="#1a5fa8", weight=weight_render, opacity=opacity_render, tooltip=e["line_name"]).add_to(m_net)
+            weight_render  = 8 if is_target else 4
+            opacity_render = 1.0 if is_target else 0.35
+            color_render   = "#e63946" if (is_target and target_focus != "كامل الشبكة") else "#1a5fa8"
+
+            folium.PolyLine(
+                [e["start_coord"], e["end_coord"]],
+                color=color_render, weight=weight_render, opacity=opacity_render,
+                tooltip=f"{e['line_name']} — {e['distance']:.1f} م"
+            ).add_to(m_net)
 
         for coord, nid in ana.nodes_coords.items():
-            folium.CircleMarker(location=coord, radius=7, color="#0a2a5e", fill=True, fillColor="#e63946", fillOpacity=0.9, tooltip=f"منهل #{nid}").add_to(m_net)
+            folium.CircleMarker(
+                location=coord, radius=7, color="#0a2a5e",
+                fill=True, fillColor="#e63946", fillOpacity=0.9,
+                tooltip=f"منهل #{nid}"
+            ).add_to(m_net)
 
-        m_net.fit_bounds(get_bounds(all_c))
-        st_folium(m_net, width=None, height=500, key="analysis_map")
+        # الزوم/التركيز يتم حصراً على حدود الفرع المختار (وليس الشبكة كاملة)
+        m_net.fit_bounds(get_bounds(focus_c), max_zoom=18)
+        st_folium(m_net, width=None, height=550, key=f"analysis_map_{target_focus}")
 
         st.markdown("#### 📋 قائمة فروع الشبكة المحللة")
         rows = [{"اسم الفرع الهيدروليكي": e["line_name"], "طول الفرع (م)": f"{e['distance']:.2f}", "منهل البداية": f"منهل #{e['node_start']}", "منهل النهاية": f"منهل #{e['node_end']}"} for e in ana.edges_list]
@@ -637,7 +697,7 @@ with tabs[4]:
             st.markdown("""<div class="info-banner">🗺️ كروكي تفاعلي ملون حسب أقطار الأنابيب المخصصة لكل فرع.</div>""", unsafe_allow_html=True)
             all_c = [pt for ln in st.session_state.lines for pt in ln["coords"]]
             m_rep = folium.Map(location=center_of(all_c), zoom_start=14, tiles="OpenStreetMap")
-            Fullscreen().add_to(m_rep)
+            FullScreen().add_to(m_rep)
 
             diameter_legend_added = set()
             for edge_r in result["per_edge"]:
@@ -664,8 +724,17 @@ with tabs[4]:
             proj_owner = st.text_input("الجهة المالكة للمشروع", value="أمانة المنطقة")
             engineer = st.text_input("اسم المهندس المسؤول", value="")
             
-            st.markdown("#### 🌍 إرفاق كروكي خريطة الخلفية للـ PDF")
-            uploaded_map_img = st.file_uploader("ارفع لقطة شاشة خريطة OpenStreetMap (اختياري)", type=["png", "jpg", "jpeg"])
+            st.markdown("#### 🌍 خريطة خلفية OpenStreetMap للتقرير")
+            st.markdown("""
+            <div class="info-banner">
+            🗺️ سيتم توليد صورة الخريطة تلقائياً بخلفية OpenStreetMap الحقيقية وتضمينها داخل التقرير،
+            مع تلوين كل فرع حسب قطره ورسم جميع المناهل عليها. لا حاجة لأي لقطة شاشة يدوية.
+            </div>
+            """, unsafe_allow_html=True)
+            auto_map = st.checkbox("توليد خريطة OpenStreetMap تلقائياً داخل التقرير", value=True)
+            uploaded_map_img = None
+            if not auto_map:
+                uploaded_map_img = st.file_uploader("أو ارفع لقطة شاشة خريطة بديلة (اختياري)", type=["png", "jpg", "jpeg"])
 
             if st.button("📥 إنشاء وتحميل التقرير الهندسي PDF النهائي", use_container_width=True):
                 with st.spinner("جاري صياغة ملف PDF..."):
@@ -700,6 +769,35 @@ with tabs[4]:
                             elems.append(HRFlowable(width="100%", thickness=1, color=BLUE, spaceAfter=4))
                             elems.append(Image(uploaded_map_img, width=260*mm, height=120*mm))
                             elems.append(PageBreak())
+                        elif auto_map:
+                            map_png_bytes = render_osm_static_map(
+                                result["per_edge"], ana.nodes_coords, PIPE_COLORS,
+                                width=1600, height=850,
+                            )
+                            if map_png_bytes:
+                                elems.append(Paragraph("GEOGRAPHICAL INFRASTRUCTURE ROUTE LAYOUT (OpenStreetMap)", s_h2))
+                                elems.append(HRFlowable(width="100%", thickness=1, color=BLUE, spaceAfter=4))
+                                elems.append(Image(io.BytesIO(map_png_bytes), width=260*mm, height=138*mm))
+
+                                # مفتاح الأقطار أسفل الخريطة
+                                legend_used = sorted({e["diameter"] for e in result["per_edge"]})
+                                legend_row = [Paragraph(
+                                    "  &nbsp;&nbsp; ".join(
+                                        f'<font color="{PIPE_COLORS.get(d,"#1a5fa8")}">■</font> Ø{d} مم'
+                                        for d in legend_used
+                                    ) + '  &nbsp;&nbsp; <font color="#e63946">●</font> منهل تفتيش',
+                                    s_norm
+                                )]
+                                elems.append(Spacer(1, 2*mm))
+                                elems.append(Table([legend_row], colWidths=[260*mm]))
+                                elems.append(PageBreak())
+                            else:
+                                elems.append(Paragraph(
+                                    "⚠ تعذّر توليد خريطة OpenStreetMap تلقائياً (لا يوجد اتصال بخوادم البلاطات في هذه البيئة). "
+                                    "يمكنك إيقاف خيار التوليد التلقائي ورفع لقطة شاشة بديلة.",
+                                    s_norm
+                                ))
+                                elems.append(Spacer(1, 6*mm))
 
                         elems.append(Paragraph("1. DIRECT COST INFRASTRUCTURE BILL OF QUANTITIES (BOQ)", s_h2))
                         boq_data = [["Item Description Specification", "Calculated Qty", "Unit", "Total (SAR)"]]
