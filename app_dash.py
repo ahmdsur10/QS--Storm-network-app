@@ -100,6 +100,7 @@ if "lines" not in st.session_state:
 
 if "branch_specs" not in st.session_state:
     st.session_state.branch_specs = {}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # CSS
 # ─────────────────────────────────────────────────────────────────────────────
@@ -242,9 +243,11 @@ def num_traps(length):
     return max(1, round(length / TRAP_SPACING))
 
 def renumber_lines():
-    """يعيد ترقيم جميع الفروع بأسماء رمزية فريدة ومتسلسلة (PIPE1, PIPE2, ...) لتمييزها في الخريطة والبيانات."""
+    """يعيد ترقيم جميع الخطوط المرسومة بأسماء رمزية فريدة (LINE1, LINE2, ...).
+    ملاحظة: هذا رمز الخط الكامل كما رُسم؛ أما ترقيم الفروع الناتجة عن تقسيم
+    الخط عند نقاط التوصيل (PIPE1, PIPE2, ...) فيتم توليده تلقائياً أثناء التحليل."""
     for i, ln in enumerate(st.session_state.lines):
-        ln["code"] = f"PIPE{i+1}"
+        ln["code"] = f"LINE{i+1}"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ترجمة أسماء البنود والوحدات إلى الإنجليزية (تُستخدم حصرياً داخل تقرير PDF)
@@ -317,8 +320,15 @@ def render_osm_static_map(per_edge, nodes_coords, pipe_colors, width=1400, heigh
 # محلل الشبكة
 # ─────────────────────────────────────────────────────────────────────────────
 class NetworkAnalyzer:
-    def __init__(self, lines):
+    """
+    يحلّل الشبكة ويقسّم كل خط مرسوم إلى «فروع» (أجزاء) عند كل نقطة توصيل.
+    كل فرع ناتج عن التقسيم يحصل على رمز مستقل ومتسلسل (PIPE1, PIPE2, ...)
+    عبر كامل الشبكة، ويمكن أن يحمل قطراً وعمقاً مختلفين عن بقية فروع نفس الخط،
+    عبر قاموس overrides (يُمرَّر من st.session_state.branch_specs).
+    """
+    def __init__(self, lines, overrides=None):
         self.lines = [ln for ln in lines if ln.get("selected", True)]
+        self.overrides = overrides or {}
         self.G = nx.Graph()
         self.edges_list = []
         self.nodes_coords = {}
@@ -326,10 +336,13 @@ class NetworkAnalyzer:
 
     def _build(self):
         nid = 0
+        branch_counter = 0
         for line in self.lines:
             coords = line.get("coords", [])
             if len(coords) < 2:
                 continue
+            dflt_diameter = line.get("diameter", 600)
+            dflt_depth = line.get("depth", 1.5)
             for i in range(len(coords)-1):
                 s = tuple(coords[i][:2])
                 e = tuple(coords[i+1][:2])
@@ -341,18 +354,25 @@ class NetworkAnalyzer:
                 dist = haversine(coords[i], coords[i+1])
                 sn, en = self.nodes_coords[s], self.nodes_coords[e]
                 self.G.add_edge(sn, en, distance=dist)
-                
+
+                branch_counter += 1
+                seg_key = f"{line['id']}_{i}"
+                ov = self.overrides.get(seg_key, {})
+                diameter = ov.get("diameter", dflt_diameter)
+                depth = ov.get("depth", dflt_depth)
+
                 self.edges_list.append({
                     "id": line["id"],
+                    "seg_key": seg_key,
+                    "code": f"PIPE{branch_counter}",
                     "start_coord": s,
                     "end_coord": e,
                     "distance": dist,
                     "line_name": line.get("name", "خط"),
-                    "code": line.get("code", ""),
                     "node_start": sn,
                     "node_end": en,
-                    "diameter": line.get("diameter", 600),
-                    "depth": line.get("depth", 1.5),
+                    "diameter": diameter,
+                    "depth": depth,
                 })
 
     def stats(self):
@@ -366,7 +386,7 @@ class NetworkAnalyzer:
 # ─────────────────────────────────────────────────────────────────────────────
 # Session State
 # ─────────────────────────────────────────────────────────────────────────────
-for key, val in [("lines", []), ("analyzer", None), ("cost", None)]:
+for key, val in [("lines", []), ("analyzer", None), ("cost", None), ("branch_specs", {})]:
     if key not in st.session_state:
         st.session_state[key] = val
 
@@ -480,7 +500,7 @@ with tabs[1]:
                         new_line = {
                             "id": str(uuid.uuid4()),
                             "name": f"خط {len(st.session_state.lines)+1}",
-                            "code": f"PIPE{len(st.session_state.lines)+1}",
+                            "code": f"LINE{len(st.session_state.lines)+1}",
                             "length": length,
                             "coords": coords,
                             "diameter": 600,
@@ -533,7 +553,7 @@ with tabs[1]:
                         if len(coords) >= 2:
                             name = feat.get("properties", {}).get("name", f"خط {len(st.session_state.lines)+1}")
                             st.session_state.lines.append({
-                                "id": str(uuid.uuid4()), "name": name, "code": f"PIPE{len(st.session_state.lines)+1}",
+                                "id": str(uuid.uuid4()), "name": name, "code": f"LINE{len(st.session_state.lines)+1}",
                                 "length": line_length(coords),
                                 "coords": coords, "diameter": 600, "depth": 1.5, "selected": True
                             })
@@ -567,7 +587,7 @@ with tabs[1]:
                                     if len(coords) >= 2:
                                         st.session_state.lines.append({
                                             "id": str(uuid.uuid4()), "name": f"خط {len(st.session_state.lines)+1}",
-                                            "code": f"PIPE{len(st.session_state.lines)+1}",
+                                            "code": f"LINE{len(st.session_state.lines)+1}",
                                             "length": line_length(coords), "coords": coords, "diameter": 600, "depth": 1.5, "selected": True
                                         })
                                         added += 1
@@ -589,7 +609,7 @@ with tabs[2]:
         st.warning("⚠️ يرجى إضافة ورسم مسارات خطوط أولاً من التبويب السابق.")
     else:
         # تحليل تلقائي للشبكة عند أي تغيير في الخطوط
-        st.session_state.analyzer = NetworkAnalyzer(st.session_state.lines)
+        st.session_state.analyzer = NetworkAnalyzer(st.session_state.lines, st.session_state.branch_specs)
         ana = st.session_state.analyzer
         stat = ana.stats()
 
@@ -606,11 +626,11 @@ with tabs[2]:
         st.markdown("---")
 
         # ── خريطة تحليلية مع تكبير على فرع مختار ──────────────────────────
-        st.markdown("#### 🔍 تحديد فرع لعمل تكبير (Zoom) تلقائي عليه")
+        st.markdown("#### 🔍 تحديد خط لعمل تكبير (Zoom) تلقائي عليه")
         line_labels = [f"{ln.get('code', '')} — {ln['name']}" for ln in st.session_state.lines]
         label_to_name = {f"{ln.get('code', '')} — {ln['name']}": ln["name"] for ln in st.session_state.lines}
         target_focus_label = st.selectbox(
-            "اختر الفرع المراد عمل التكبير والتركيز المباشر عليه:",
+            "اختر الخط المراد عمل التكبير والتركيز المباشر عليه:",
             ["كامل الشبكة"] + line_labels,
             key="analysis_focus_select",
         )
@@ -659,47 +679,60 @@ with tabs[2]:
         </div>
         """, unsafe_allow_html=True)
 
+        # ── إعداد كل فرع (جزء) على حدة بعد تقسيم الخطوط عند نقاط التوصيل ───
+        st.markdown("#### ⚙️ مواصفات كل فرع على حدة (بعد تقسيم كل خط عند نقاط التوصيل)")
+        st.markdown("""
+        <div class="info-banner">
+            📌 عند التحليل يُقسَّم كل خط مرسوم إلى <b>فروع مستقلة</b> عند كل نقطة توصيل مع خط آخر، ويحصل
+            كل فرع على <b>رمز فريد خاص به</b> (PIPE1, PIPE2, ...). حدّد <b>القطر (مم) والعمق (م)</b> لكل فرع
+            بشكل مستقل تماماً عن بقية الفروع — حتى لو كانت جزءاً من نفس الخط — ويُعاد احتساب الكميات
+            والتكلفة تلقائياً وفوراً حسب مواصفات كل فرع على حدة.
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.session_state.analyzer = NetworkAnalyzer(st.session_state.lines, st.session_state.branch_specs)
+        ana = st.session_state.analyzer
+
+        # تنظيف أي مواصفات محفوظة تخص فروعاً لم تعد موجودة (بعد حذف/تعديل الخطوط)
+        valid_seg_keys = {e["seg_key"] for e in ana.edges_list}
+        st.session_state.branch_specs = {k: v for k, v in st.session_state.branch_specs.items() if k in valid_seg_keys}
+
         hc = st.columns([1, 2.3, 1.3, 1.8, 1.8])
-        headers = ["الرمز", "اسم الفرع", "الطول (م)", "القطر (مم)", "العمق (م)"]
+        headers = ["رمز الفرع", "الخط الأصلي", "طول الفرع (م)", "القطر (مم)", "العمق (م)"]
         for col, txt in zip(hc, headers):
             col.markdown(f"**{txt}**")
         st.markdown("<hr style='margin:8px 0;'>", unsafe_allow_html=True)
 
-        for idx, line in enumerate(st.session_state.lines):
+        dia_options = sorted(PIPE_PRICES.keys())
+        for e in ana.edges_list:
             cols = st.columns([1, 2.3, 1.3, 1.8, 1.8])
-            cols[0].markdown(f"**{line.get('code', f'PIPE{idx+1}')}**")
+            cols[0].markdown(f"**{e['code']}**")
+            cols[1].write(e["line_name"])
+            cols[2].write(f"{e['distance']:.1f} م")
 
-            new_name = cols[1].text_input("الاسم", value=line["name"], key=f"cost_name_{line['id']}", label_visibility="collapsed")
-            if new_name != line["name"]:
-                st.session_state.lines[idx]["name"] = new_name
-
-            cols[2].write(f"{line['length']:.1f} م")
-
-            current_dia = line.get("diameter", 600)
-            dia_options = sorted(PIPE_PRICES.keys())
+            current_dia = e["diameter"]
             selected_dia = cols[3].selectbox(
                 "القطر", dia_options,
                 index=dia_options.index(current_dia) if current_dia in dia_options else 2,
-                key=f"cost_dia_{line['id']}", label_visibility="collapsed"
+                key=f"seg_dia_{e['seg_key']}", label_visibility="collapsed"
             )
-            if selected_dia != current_dia:
-                st.session_state.lines[idx]["diameter"] = selected_dia
 
-            current_depth = float(line.get("depth", 1.5))
+            current_depth = float(e["depth"])
             selected_depth = cols[4].number_input(
                 "العمق", min_value=0.5, max_value=12.0, value=current_depth, step=0.1,
-                key=f"cost_dep_{line['id']}", label_visibility="collapsed"
+                key=f"seg_dep_{e['seg_key']}", label_visibility="collapsed"
             )
-            if selected_depth != current_depth:
-                st.session_state.lines[idx]["depth"] = selected_depth
+
+            if selected_dia != current_dia or selected_depth != current_depth:
+                st.session_state.branch_specs[e["seg_key"]] = {"diameter": selected_dia, "depth": selected_depth}
 
         st.markdown("---")
 
         recalc = st.button("🧮 حساب وتحديث جدول كميات المشروع بالكامل", use_container_width=True)
 
-        # ✅ يُعاد الحساب تلقائياً وبشكل مباشر من مواصفات الفروع أعلاه في كل مرة
-        # (مصدر وحيد للبيانات — لا يوجد أي إدخال مكرر للقطر/العمق في مكان آخر)
-        st.session_state.analyzer = NetworkAnalyzer(st.session_state.lines)
+        # ✅ إعادة بناء المحلل بعد أي تعديل أعلاه بحيث تنعكس مواصفات كل فرع فوراً
+        # في نفس التشغيلة (مصدر وحيد للبيانات — لا يوجد أي إدخال مكرر في مكان آخر)
+        st.session_state.analyzer = NetworkAnalyzer(st.session_state.lines, st.session_state.branch_specs)
         ana = st.session_state.analyzer
 
         all_items = {}
