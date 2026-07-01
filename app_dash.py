@@ -36,7 +36,7 @@ except Exception:
 # إعداد الصفحة
 # ─────────────────────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="Storm Network Analysis - Drainage System Design",
+    page_title="محلل شبكات السيول - نظام تحليل وتصميم الصرف الصحي",
     page_icon="🌊",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -218,43 +218,46 @@ class NetworkAnalyzer:
 # ─────────────────────────────────────────────────────────────────────────────
 st.markdown("""
 <div class="main-header">
-    <h1>🌊 Storm Network Analysis & Drainage Design</h1>
-    <p>Intelligent System for Drainage Network Analysis and Cost Estimation</p>
+    <h1>🌊 محلل شبكات السيول وتصميم الصرف الصحي</h1>
+    <p>نظام ذكي لتحليل شبكات الصرف وحساب التكاليف والكميات</p>
 </div>
 """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# التبويب 1: إدخال البيانات - PIPES
+# التبويبات
 # ─────────────────────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4 = st.tabs(["📊 Input Data & Design", "🗺️ Map & Visualization", "💰 Cost Analysis", "📄 Report"])
+tab1, tab2, tab3, tab4 = st.tabs(["📊 إدخال البيانات والتصميم", "🗺️ الخريطة والتصور", "💰 تحليل التكاليف", "📄 التقرير"])
 
+# ─────────────────────────────────────────────────────────────────────────────
+# التبويب 1: إدخال البيانات
+# ─────────────────────────────────────────────────────────────────────────────
 with tab1:
-    st.markdown("### 📥 Input Drainage Network Data")
+    st.markdown("### 📥 إدخال بيانات شبكة الصرف")
     
     col1, col2 = st.columns([3, 1])
     
     with col1:
-        st.info("✏️ Enter each pipe segment with its specifications. Pipes will be automatically numbered (PIPE1, PIPE2, etc.)")
+        st.info("✏️ أدخل كل جزء من أجزاء الأنابيب مع مواصفاته. سيتم ترقيم الفروع تلقائياً (أنبوب1، أنبوب2، إلخ)")
     
     with col2:
-        if st.button("➕ Add New Pipe", use_container_width=True):
+        if st.button("➕ إضافة أنبوب جديد", use_container_width=True):
             st.session_state.pipe_count += 1
             st.session_state.lines = []
             st.rerun()
     
-    # عرض نموذج إدخال لكل pipe
+    # عرض نموذج إدخال لكل أنبوب
     num_pipes = st.session_state.pipe_count
     
     if num_pipes == 0:
-        st.warning("👈 Click 'Add New Pipe' to start adding pipes")
+        st.warning("👈 اضغط على 'إضافة أنبوب جديد' للبدء")
     else:
         for i in range(num_pipes):
-            with st.expander(f"🔧 PIPE{i+1} - Specifications", expanded=(i == num_pipes - 1)):
+            with st.expander(f"🔧 أنبوب{i+1} - المواصفات", expanded=(i == num_pipes - 1)):
                 col1, col2, col3, col4 = st.columns(4)
                 
                 with col1:
                     start_lat = st.number_input(
-                        f"Start Latitude", 
+                        f"دائرة العرض (البداية)", 
                         value=24.7136 + i * 0.001,
                         format="%.6f",
                         key=f"start_lat_{i}"
@@ -262,7 +265,7 @@ with tab1:
                 
                 with col2:
                     start_lng = st.number_input(
-                        f"Start Longitude",
+                        f"خط الطول (البداية)",
                         value=46.6753 + i * 0.001,
                         format="%.6f",
                         key=f"start_lng_{i}"
@@ -270,7 +273,7 @@ with tab1:
                 
                 with col3:
                     end_lat = st.number_input(
-                        f"End Latitude",
+                        f"دائرة العرض (النهاية)",
                         value=24.7140 + i * 0.001,
                         format="%.6f",
                         key=f"end_lat_{i}"
@@ -278,7 +281,7 @@ with tab1:
                 
                 with col4:
                     end_lng = st.number_input(
-                        f"End Longitude",
+                        f"خط الطول (النهاية)",
                         value=46.6760 + i * 0.001,
                         format="%.6f",
                         key=f"end_lng_{i}"
@@ -288,14 +291,14 @@ with tab1:
                 
                 with col1:
                     diameter = st.selectbox(
-                        "Pipe Diameter (mm)",
+                        "قطر الأنبوب (ملم)",
                         options=sorted(PIPE_PRICES.keys()),
                         key=f"diameter_{i}"
                     )
                 
                 with col2:
                     depth = st.number_input(
-                        "Burial Depth (m)",
+                        "عمق الدفن (متر)",
                         min_value=0.5,
                         max_value=12.0,
                         value=1.5,
@@ -305,7 +308,7 @@ with tab1:
                 
                 with col3:
                     num_nodes = st.number_input(
-                        "Number of Nodes (Manholes)",
+                        "عدد المناهل",
                         min_value=1,
                         max_value=50,
                         value=2,
@@ -317,7 +320,7 @@ with tab1:
                 if i < len(st.session_state.lines):
                     st.session_state.lines[i] = {
                         "id": i,
-                        "name": f"PIPE{i+1}",
+                        "name": f"أنبوب{i+1}",
                         "start_coord": (start_lat, start_lng),
                         "end_coord": (end_lat, end_lng),
                         "diameter": diameter,
@@ -327,7 +330,7 @@ with tab1:
                 else:
                     st.session_state.lines.append({
                         "id": i,
-                        "name": f"PIPE{i+1}",
+                        "name": f"أنبوب{i+1}",
                         "start_coord": (start_lat, start_lng),
                         "end_coord": (end_lat, end_lng),
                         "diameter": diameter,
@@ -335,11 +338,11 @@ with tab1:
                         "num_nodes": num_nodes
                     })
         
-        # زر إزالة آخر pipe
+        # زر إزالة آخر أنبوب
         if num_pipes > 0:
             col1, col2 = st.columns([5, 1])
             with col2:
-                if st.button("➖ Remove Last Pipe", use_container_width=True):
+                if st.button("➖ حذف آخر أنبوب", use_container_width=True):
                     st.session_state.pipe_count -= 1
                     st.session_state.lines.pop()
                     st.session_state.cost = None
@@ -347,7 +350,7 @@ with tab1:
     
     # زر الحساب
     if num_pipes > 0:
-        if st.button("🧮 Calculate Cost & Analysis", use_container_width=True, type="primary"):
+        if st.button("🧮 حساب التكاليف والتحليل", use_container_width=True, type="primary"):
             st.session_state.analyzer = NetworkAnalyzer(st.session_state.lines)
             
             analyzer = st.session_state.analyzer
@@ -362,19 +365,19 @@ with tab1:
                 d = edge["diameter"]
                 dep = edge["depth"]
                 L = edge["distance"]
-                n_mh = edge.get("num_nodes", 2)  # استخدام العدد المدخل من المستخدم
-                n_tr = num_traps(L)  # مصائد الأمطار = L / 35
+                n_mh = edge.get("num_nodes", 2)
+                n_tr = num_traps(L)
                 p_pipe = PIPE_PRICES.get(d, 725)
                 
                 items = [
-                    {"item": "Reinforced Concrete Drainage Pipes", "quantity": L, "unit": "m", "price": p_pipe, "total": L * p_pipe},
-                    {"item": "Trenching and Excavation", "quantity": L, "unit": "m", "price": EXCAVATION, "total": L * EXCAVATION},
-                    {"item": "Concrete Inspection Manholes", "quantity": n_mh, "unit": "unit", "price": MANHOLE_PRICE, "total": n_mh * MANHOLE_PRICE},
-                    {"item": "Rain Traps (Storm Grates)", "quantity": n_tr, "unit": "unit", "price": TRAP_PRICE, "total": n_tr * TRAP_PRICE},
-                    {"item": "Backfill and Compaction", "quantity": L * dep, "unit": "m³", "price": BACKFILL_PRICE, "total": L * dep * BACKFILL_PRICE},
+                    {"البند": "أنابيب صرف خرسانية مدعمة", "الكمية": L, "الوحدة": "متر طولي", "السعر": p_pipe, "الإجمالي": L * p_pipe},
+                    {"البند": "أعمال الحفر والخنادق", "الكمية": L, "الوحدة": "متر طولي", "السعر": EXCAVATION, "الإجمالي": L * EXCAVATION},
+                    {"البند": "مناهل تفتيش خرسانية", "الكمية": n_mh, "الوحدة": "عدد", "السعر": MANHOLE_PRICE, "الإجمالي": n_mh * MANHOLE_PRICE},
+                    {"البند": "مصائد الأمطار", "الكمية": n_tr, "الوحدة": "عدد", "السعر": TRAP_PRICE, "الإجمالي": n_tr * TRAP_PRICE},
+                    {"البند": "أعمال الردم والدمك", "الكمية": L * dep, "الوحدة": "متر مكعب", "السعر": BACKFILL_PRICE, "الإجمالي": L * dep * BACKFILL_PRICE},
                 ]
                 
-                edge_total = sum(it["total"] for it in items)
+                edge_total = sum(it["الإجمالي"] for it in items)
                 per_edge.append({
                     "line_name": edge["line_name"],
                     "diameter": d,
@@ -394,14 +397,14 @@ with tab1:
                 "total_cost": total_cost,
                 "all_items": all_items
             }
-            st.success("✅ Calculation Complete!")
+            st.success("✅ تم الحساب بنجاح!")
             st.rerun()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # التبويب 2: الخريطة
 # ─────────────────────────────────────────────────────────────────────────────
 with tab2:
-    st.markdown("### 🗺️ Network Visualization")
+    st.markdown("### 🗺️ تصور الشبكة على الخريطة")
     
     if st.session_state.lines:
         # خريطة Folium
@@ -425,7 +428,7 @@ with tab2:
                 color=color,
                 weight=3,
                 opacity=0.8,
-                popup=f"{line['name']}<br>Diameter: {line.get('diameter', 600)}mm<br>Depth: {line.get('depth', 1.5)}m"
+                popup=f"{line['name']}<br>القطر: {line.get('diameter', 600)}ملم<br>العمق: {line.get('depth', 1.5)}متر"
             ).add_to(m)
             
             # نقاط البداية والنهاية
@@ -435,8 +438,8 @@ with tab2:
                 color=color,
                 fill=True,
                 fillColor=color,
-                popup=f"{line['name']} - Start",
-                tooltip=f"{line['name']} Start"
+                popup=f"{line['name']} - البداية",
+                tooltip=f"{line['name']} البداية"
             ).add_to(m)
             
             folium.CircleMarker(
@@ -445,19 +448,19 @@ with tab2:
                 color=color,
                 fill=True,
                 fillColor=color,
-                popup=f"{line['name']} - End",
-                tooltip=f"{line['name']} End"
+                popup=f"{line['name']} - النهاية",
+                tooltip=f"{line['name']} النهاية"
             ).add_to(m)
         
         st_folium(m, width=1400, height=600)
     else:
-        st.info("📍 Add pipes to see the network map")
+        st.info("📍 أضف أنابيب لرؤية الشبكة على الخريطة")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # التبويب 3: تحليل التكاليف
 # ─────────────────────────────────────────────────────────────────────────────
 with tab3:
-    st.markdown("### 💰 Cost Analysis & Specifications")
+    st.markdown("### 💰 تحليل التكاليف والمواصفات")
     
     if st.session_state.cost:
         result = st.session_state.cost
@@ -467,71 +470,71 @@ with tab3:
         t_mh = sum(e["n_manholes"] for e in result["per_edge"])
         t_tr = sum(e["n_traps"] for e in result["per_edge"])
         
-        k1.markdown(f'<div class="kpi-card"><div class="kpi-value">{len(result["per_edge"])}</div><div class="kpi-label">Total Pipes</div></div>', unsafe_allow_html=True)
-        k2.markdown(f'<div class="kpi-card"><div class="kpi-value">{t_mh}</div><div class="kpi-label">Total Manholes</div></div>', unsafe_allow_html=True)
-        k3.markdown(f'<div class="kpi-card"><div class="kpi-value">{t_tr}</div><div class="kpi-label">Rain Traps</div></div>', unsafe_allow_html=True)
-        k4.markdown(f'<div class="kpi-card"><div class="kpi-value">SAR {result["total_cost"]:,.0f}</div><div class="kpi-label">Total Estimated Cost</div></div>', unsafe_allow_html=True)
+        k1.markdown(f'<div class="kpi-card"><div class="kpi-value">{len(result["per_edge"])}</div><div class="kpi-label">إجمالي الأنابيب</div></div>', unsafe_allow_html=True)
+        k2.markdown(f'<div class="kpi-card"><div class="kpi-value">{t_mh}</div><div class="kpi-label">إجمالي المناهل</div></div>', unsafe_allow_html=True)
+        k3.markdown(f'<div class="kpi-card"><div class="kpi-value">{t_tr}</div><div class="kpi-label">مصائد الأمطار</div></div>', unsafe_allow_html=True)
+        k4.markdown(f'<div class="kpi-card"><div class="kpi-value">ر.س {result["total_cost"]:,.0f}</div><div class="kpi-label">إجمالي التكلفة المتوقعة</div></div>', unsafe_allow_html=True)
         
         st.markdown("---")
         
         # جدول الكميات الإجمالية
-        st.subheader("📊 Summary of Quantities & Costs")
+        st.subheader("📊 ملخص الكميات والتكاليف")
         
         summary_data = []
         for edge in result["per_edge"]:
             summary_data.append({
-                "Pipe": edge["line_name"],
-                "Diameter (mm)": edge["diameter"],
-                "Depth (m)": f"{edge['depth']:.2f}",
-                "Length (m)": f"{edge['length']:.2f}",
-                "Manholes": edge["n_manholes"],
-                "Rain Traps": edge["n_traps"],
-                "Cost (SAR)": f"{edge['total']:,.0f}"
+                "الأنبوب": edge["line_name"],
+                "القطر (ملم)": edge["diameter"],
+                "العمق (متر)": f"{edge['depth']:.2f}",
+                "الطول (متر)": f"{edge['length']:.2f}",
+                "المناهل": edge["n_manholes"],
+                "المصائد": edge["n_traps"],
+                "التكلفة (ر.س)": f"{edge['total']:,.0f}"
             })
         
         df_summary = pd.DataFrame(summary_data)
         st.dataframe(df_summary, use_container_width=True, hide_index=True)
         
-        st.markdown(f'<div class="total-row">💰 Total Estimated Cost: SAR {result["total_cost"]:,.0f}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="total-row">💰 إجمالي التكلفة المتوقعة: ر.س {result["total_cost"]:,.0f}</div>', unsafe_allow_html=True)
         
-        # تفاصيل كل فرع
+        # تفاصيل كل أنبوب
         st.markdown("---")
-        st.subheader("🔍 Detailed Breakdown by Pipe")
+        st.subheader("🔍 التفاصيل الكاملة لكل أنبوب")
         
         for edge_idx, e in enumerate(result["per_edge"]):
-            with st.expander(f"📌 {e['line_name']} - Length: {e['length']:.1f} m", expanded=False):
+            with st.expander(f"📌 {e['line_name']} - الطول: {e['length']:.1f} متر", expanded=False):
                 col1, col2, col3 = st.columns(3)
                 
                 with col1:
-                    st.metric("Diameter", f"{e['diameter']} mm")
+                    st.metric("القطر", f"{e['diameter']} ملم")
                 
                 with col2:
-                    st.metric("Depth", f"{e['depth']} m")
+                    st.metric("العمق", f"{e['depth']} متر")
                 
                 with col3:
-                    st.metric("Total Cost", f"SAR {e['total']:,.0f}")
+                    st.metric("إجمالي التكلفة", f"ر.س {e['total']:,.0f}")
                 
                 # جدول العناصر
                 items_data = []
                 for it in e["items"]:
                     items_data.append({
-                        "Item": it["item"],
-                        "Quantity": f"{it['quantity']:.2f}",
-                        "Unit": it["unit"],
-                        "Unit Price (SAR)": f"{it['price']:,.0f}",
-                        "Total (SAR)": f"{it['total']:,.0f}"
+                        "البند": it["البند"],
+                        "الكمية": f"{it['الكمية']:.2f}",
+                        "الوحدة": it["الوحدة"],
+                        "سعر الوحدة (ر.س)": f"{it['السعر']:,.0f}",
+                        "الإجمالي (ر.س)": f"{it['الإجمالي']:,.0f}"
                     })
                 
                 df_items = pd.DataFrame(items_data)
                 st.dataframe(df_items, use_container_width=True, hide_index=True)
     else:
-        st.info("💡 Click 'Calculate Cost & Analysis' in the Input Data tab to see cost analysis")
+        st.info("💡 اضغط على 'حساب التكاليف والتحليل' في تبويب إدخال البيانات لرؤية التحليل")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # التبويب 4: التقرير PDF (بالإنجليزية فقط)
 # ─────────────────────────────────────────────────────────────────────────────
 with tab4:
-    st.markdown("### 📄 Project Report (PDF)")
+    st.markdown("### 📄 التقرير (بصيغة PDF)")
     
     if st.session_state.cost:
         result = st.session_state.cost
@@ -643,16 +646,16 @@ with tab4:
             item_totals = {}
             for edge in result["per_edge"]:
                 for item in edge["items"]:
-                    item_name = item["item"]
+                    item_name = item["البند"]
                     if item_name not in item_totals:
                         item_totals[item_name] = {
                             "quantity": 0,
-                            "unit": item["unit"],
-                            "price": item["price"],
+                            "unit": item["الوحدة"],
+                            "price": item["السعر"],
                             "total": 0
                         }
-                    item_totals[item_name]["quantity"] += item["quantity"]
-                    item_totals[item_name]["total"] += item["total"]
+                    item_totals[item_name]["quantity"] += item["الكمية"]
+                    item_totals[item_name]["total"] += item["الإجمالي"]
             
             for item_name, data in item_totals.items():
                 cost_data.append([
@@ -697,21 +700,21 @@ with tab4:
         pdf_buffer = create_pdf_report()
         
         st.download_button(
-            label="📥 Download PDF Report",
+            label="📥 تنزيل التقرير بصيغة PDF",
             data=pdf_buffer,
             file_name=f"Drainage_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
             mime="application/pdf",
             use_container_width=True
         )
         
-        st.success("✅ Report ready for download")
+        st.success("✅ التقرير جاهز للتنزيل")
     else:
-        st.info("💡 Complete the analysis in the Input Data tab to generate a report")
+        st.info("💡 أكمل التحليل في تبويب إدخال البيانات لتوليد التقرير")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Footer
 # ─────────────────────────────────────────────────────────────────────────────
 st.markdown("---")
 st.markdown("""<div style="text-align:center;color:#9aa4b8;font-size:0.85rem;padding:16px 0">
-🌊 Storm Network Analysis & Drainage System Design - Intelligent Engineering Solutions
+🌊 نظام تحليل شبكات السيول وتصميم شبكات الصرف الصحي - حلول هندسية ذكية
 </div>""", unsafe_allow_html=True)
