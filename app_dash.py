@@ -98,6 +98,8 @@ if "analyzer" not in st.session_state:
 if "lines" not in st.session_state:
     st.session_state.lines = []
 
+if "branch_specs" not in st.session_state:
+    st.session_state.branch_specs = {}
 # ─────────────────────────────────────────────────────────────────────────────
 # CSS
 # ─────────────────────────────────────────────────────────────────────────────
