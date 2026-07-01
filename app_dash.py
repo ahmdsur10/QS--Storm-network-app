@@ -324,6 +324,7 @@ class NetworkAnalyzer:
         self.nodes_coords = {}
         self._build()
 
+    عبر قاموس overrides (يُمرَّر من st.session_state.branch_specs).
     def _build(self):
         nid = 0
         for line in self.lines:
