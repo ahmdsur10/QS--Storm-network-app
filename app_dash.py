@@ -222,6 +222,37 @@ BACKFILL_PRICE = 30
 TRAP_SPACING   = 35      
 
 # ─────────────────────────────────────────────────────────────────────────────
+# أنماط خلفية الخريطة (تُستخدم في الخرائط التفاعلية وفي خريطة تقرير الـ PDF)
+# ─────────────────────────────────────────────────────────────────────────────
+MAP_STYLES = {
+    "🗺️ خريطة الشوارع (OpenStreetMap)": {
+        "tiles": "OpenStreetMap",
+        "attr": None,
+        "static_url": "https://a.tile.openstreetmap.org/{z}/{x}/{y}.png",
+        "label_en": "OpenStreetMap",
+    },
+    "🛰️ صورة جوية (أقمار صناعية)": {
+        "tiles": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        "attr": "Tiles &copy; Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community",
+        "static_url": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        "label_en": "Satellite Imagery (Esri World Imagery)",
+    },
+    "⚪ خريطة فاتحة مبسطة (Carto Positron)": {
+        "tiles": "CartoDB positron",
+        "attr": None,
+        "static_url": "https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+        "label_en": "Light Basemap (CartoDB Positron)",
+    },
+    "⛰️ خريطة تضاريس (OpenTopoMap)": {
+        "tiles": "https://a.tile.opentopomap.org/{z}/{x}/{y}.png",
+        "attr": "Map data: &copy; OpenStreetMap contributors, SRTM | Map style: &copy; OpenTopoMap (CC-BY-SA)",
+        "static_url": "https://a.tile.opentopomap.org/{z}/{x}/{y}.png",
+        "label_en": "Terrain (OpenTopoMap)",
+    },
+}
+DEFAULT_MAP_STYLE = "🗺️ خريطة الشوارع (OpenStreetMap)"
+
+# ─────────────────────────────────────────────────────────────────────────────
 # دوال مساعدة
 # ─────────────────────────────────────────────────────────────────────────────
 def haversine(c1, c2):
@@ -243,6 +274,52 @@ def renumber_lines():
     """يعيد ترقيم جميع الفروع بأسماء رمزية فريدة ومتسلسلة (PIPE1, PIPE2, ...) لتمييزها في الخريطة والبيانات."""
     for i, ln in enumerate(st.session_state.lines):
         ln["code"] = f"PIPE{i+1}"
+
+def split_and_add_branches(coords, group_label=None, base_diameter=600, base_depth=1.5):
+    """
+    يقسّم أي خط (متعدد النقاط) إلى فروع مستقلة — فرع واحد لكل ضلع بين نقطتين متتاليتين.
+    كل فرع ناتج يحصل على معرّف/ترقيم خاص به (PIPE..) وبيانات قطر وعمق مستقلة تماماً
+    عن بقية فروع نفس الخط الأصلي، بدلاً من اعتبار الخط بأكمله فرعاً واحداً.
+    يعيد قائمة الفروع الجديدة المضافة فعلياً.
+    """
+    coords = [tuple(c[:2]) for c in coords]
+    if len(coords) < 2:
+        return []
+    if group_label is None:
+        st.session_state.group_counter = st.session_state.get("group_counter", 0) + 1
+        group_label = f"خط {st.session_state.group_counter}"
+    multi = len(coords) > 2
+    added = []
+    for i in range(len(coords) - 1):
+        s, e = coords[i], coords[i + 1]
+        if s == e:
+            continue
+        seg_len = haversine(s, e)
+        new_branch = {
+            "id": str(uuid.uuid4()),
+            "name": f"{group_label} - جزء {i+1}" if multi else group_label,
+            "group": group_label,
+            "code": "",
+            "length": seg_len,
+            "coords": [s, e],
+            "diameter": base_diameter,
+            "depth": base_depth,
+            "selected": True,
+        }
+        st.session_state.lines.append(new_branch)
+        added.append(new_branch)
+    renumber_lines()
+    st.session_state.analyzer = None
+    st.session_state.cost = None
+    return added
+
+def make_base_map(location, zoom_start, style_key=None):
+    """ينشئ خريطة folium بخلفية حسب النمط المختار (شوارع / صورة جوية / أخرى)."""
+    style_key = style_key or st.session_state.get("map_style", DEFAULT_MAP_STYLE)
+    style = MAP_STYLES.get(style_key, MAP_STYLES[DEFAULT_MAP_STYLE])
+    if style.get("attr"):
+        return folium.Map(location=location, zoom_start=zoom_start, tiles=style["tiles"], attr=style["attr"])
+    return folium.Map(location=location, zoom_start=zoom_start, tiles=style["tiles"])
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ترجمة أسماء البنود والوحدات إلى الإنجليزية (تُستخدم حصرياً داخل تقرير PDF)
@@ -274,18 +351,20 @@ def center_of(coords):
     lons = [c[1] for c in coords]
     return [(min(lats)+max(lats))/2, (min(lons)+max(lons))/2]
 
-def render_osm_static_map(per_edge, nodes_coords, pipe_colors, width=1400, height=750):
+def render_static_map(per_edge, nodes_coords, pipe_colors, style_key=None, width=1400, height=750):
     """
-    يولّد صورة PNG لخريطة الشبكة بخلفية بلاطات OpenStreetMap الحقيقية،
-    مع تلوين كل فرع حسب القطر ورسم المناهل، لتُضمَّن مباشرة داخل تقرير PDF.
+    يولّد صورة PNG لخريطة الشبكة بخلفية حقيقية (شوارع OpenStreetMap، صورة جوية، أو نمط آخر
+    يختاره المستخدم)، مع تلوين كل فرع حسب القطر ورسم المناهل، لتُضمَّن مباشرة داخل تقرير PDF.
     يعيد bytes الصورة (PNG) أو None إذا تعذّر الاتصال بخوادم البلاطات.
     """
     if not STATICMAP_AVAILABLE:
         return None
+    style_key = style_key or DEFAULT_MAP_STYLE
+    style = MAP_STYLES.get(style_key, MAP_STYLES[DEFAULT_MAP_STYLE])
     try:
         m = StaticMap(
             width, height,
-            url_template="https://a.tile.openstreetmap.org/{z}/{x}/{y}.png",
+            url_template=style["static_url"],
             headers={"User-Agent": "FloodNetworkAnalyzer/1.0 (engineering report generator)"},
         )
 
@@ -300,7 +379,8 @@ def render_osm_static_map(per_edge, nodes_coords, pipe_colors, width=1400, heigh
             m.add_line(SMLine(coords_lonlat, hex_color, 5))
 
         for coord in nodes_coords.keys():
-            m.add_marker(SMCircle((coord[1], coord[0]), "#e63946", 10))
+            m.add_marker(SMCircle((coord[1], coord[0]), "#ffffff", 12))
+            m.add_marker(SMCircle((coord[1], coord[0]), "#e63946", 9))
             m.add_marker(SMCircle((coord[1], coord[0]), "#0a2a5e", 4))
 
         img = m.render()
@@ -364,7 +444,10 @@ class NetworkAnalyzer:
 # ─────────────────────────────────────────────────────────────────────────────
 # Session State
 # ─────────────────────────────────────────────────────────────────────────────
-for key, val in [("lines", []), ("analyzer", None), ("cost", None)]:
+for key, val in [
+    ("lines", []), ("analyzer", None), ("cost", None),
+    ("map_style", DEFAULT_MAP_STYLE), ("group_counter", 0),
+]:
     if key not in st.session_state:
         st.session_state[key] = val
 
@@ -426,12 +509,33 @@ with tabs[0]:
 # التبويب 1: رسم وإدخل
 with tabs[1]:
     st.markdown("<div class='section-title'>🗺️ رسم وإدخال الشبكة</div>", unsafe_allow_html=True)
-    sub1, sub2, sub3 = st.tabs(["✏️ رسم على الخريطة", "📤 استيراد GeoJSON", "📦 استيراد Shapefile"])
+
+    style_keys = list(MAP_STYLES.keys())
+    sel_style = st.selectbox(
+        "🎨 نمط خلفية الخريطة التفاعلية (شوارع / صورة جوية / أخرى)",
+        style_keys,
+        index=style_keys.index(st.session_state.map_style) if st.session_state.map_style in style_keys else 0,
+        key="map_style_selector_tab1",
+    )
+    st.session_state.map_style = sel_style
+
+    st.markdown("""
+    <div class="info-banner">
+        📌 <b>مهم:</b> أي خط يحتوي على أكثر من نقطتين (رسماً أو استيراداً) يُقسَّم تلقائياً إلى
+        <b>فروع مستقلة</b> — فرع واحد بين كل نقطتين متتاليتين، وكل فرع يأخذ <b>ترقيماً خاصاً به</b>
+        (PIPE1, PIPE2, ...) ويمكن إدخال قطر وعمق مختلفين لكل فرع على حدة من تبويب «التحليل والتكاليف».
+    </div>
+    """, unsafe_allow_html=True)
+
+    sub1, sub_manual, sub2, sub3 = st.tabs([
+        "✏️ رسم على الخريطة", "⌨️ إدخال يدوي بالإحداثيات", "📤 استيراد GeoJSON", "📦 استيراد Shapefile"
+    ])
 
     with sub1:
         st.markdown("""
         <div class="info-banner">
             📌 استخدم أداة الرسم في أعلى يسار الخريطة لرسم خطوط الشبكة. انقر لإضافة نقاط ثم انقر مرتين لإنهاء الخط.
+            كل ضلع بين نقطتين متتاليتين سيُضاف كفرع مستقل بترقيمه الخاص.
         </div>
         """, unsafe_allow_html=True)
 
@@ -443,7 +547,7 @@ with tabs[1]:
             map_center = [24.7136, 46.6753]
             zoom = 12
 
-        m_draw = folium.Map(location=map_center, zoom_start=zoom, tiles="OpenStreetMap")
+        m_draw = make_base_map(map_center, zoom)
         Fullscreen(title="ملء الشاشة").add_to(m_draw)
         MiniMap(toggle_display=True).add_to(m_draw)
 
@@ -468,39 +572,26 @@ with tabs[1]:
                 raw_coords = geom.get("coordinates", [])
                 coords = [(c[1], c[0]) for c in raw_coords]
                 if len(coords) >= 2:
-                    length = line_length(coords)
-                    is_dup = False
-                    if st.session_state.lines:
-                        last = st.session_state.lines[-1]
-                        if abs(last["length"] - length) < 0.1:
-                            is_dup = True
-                    if not is_dup:
-                        new_line = {
-                            "id": str(uuid.uuid4()),
-                            "name": f"خط {len(st.session_state.lines)+1}",
-                            "code": f"PIPE{len(st.session_state.lines)+1}",
-                            "length": length,
-                            "coords": coords,
-                            "diameter": 600,
-                            "depth": 1.5,
-                            "selected": True,
-                        }
-                        st.session_state.lines.append(new_line)
-                        renumber_lines()
-                        st.session_state.analyzer = None
-                        st.session_state.cost = None
-                        st.success(f"✅ تمت إضافة {new_line['code']} — {new_line['name']}")
-                        st.rerun()
+                    draw_hash = hash(json.dumps(raw_coords))
+                    if st.session_state.get("_last_draw_hash") != draw_hash:
+                        st.session_state["_last_draw_hash"] = draw_hash
+                        added = split_and_add_branches(coords)
+                        if added:
+                            codes_txt = "، ".join(b["code"] for b in added)
+                            st.success(f"✅ تمت إضافة {len(added)} فرع جديد: {codes_txt}")
+                            st.rerun()
 
         if st.session_state.lines:
             st.markdown("---")
-            st.markdown("**الخطوط المدخلة حالياً:**")
+            st.markdown("**الفروع المدخلة حالياً:**")
             for i, ln in enumerate(st.session_state.lines):
                 c0_, c1_, c2_, c3_ = st.columns([1, 3.5, 2, 1])
                 with c0_:
                     st.markdown(f"<b>{ln.get('code', f'PIPE{i+1}')}</b>", unsafe_allow_html=True)
                 with c1_:
                     st.session_state.lines[i]["name"] = st.text_input("الاسم", value=ln["name"], key=f"name_{ln['id']}", label_visibility="collapsed")
+                    if ln.get("group"):
+                        st.caption(f"المجموعة الأصلية: {ln['group']} · Ø{ln.get('diameter',600)} مم · عمق {ln.get('depth',1.5)} م")
                 with c2_:
                     st.write(f"📏 {ln['length']:.1f} م")
                 with c3_:
@@ -511,40 +602,110 @@ with tabs[1]:
                         st.session_state.cost = None
                         st.rerun()
 
-            if st.button("🗑️ حذف جميع الخطوط", use_container_width=True):
+            if st.button("🗑️ حذف جميع الفروع", use_container_width=True):
                 st.session_state.lines = []
                 st.session_state.analyzer = None
                 st.session_state.cost = None
                 st.rerun()
 
+    with sub_manual:
+        st.markdown("""
+        <div class="info-banner">
+            ⌨️ أضف فرعاً جديداً مباشرة بإدخال إحداثيات <b>بداية الفرع ونهايته</b> بالإضافة إلى
+            <b>القطر والعمق</b>، وستظهر النتيجة فوراً على الخريطة أدناه.
+        </div>
+        """, unsafe_allow_html=True)
+
+        with st.form("manual_add_form", clear_on_submit=True):
+            cA, cB = st.columns(2)
+            m_name = cA.text_input("اسم الفرع (اختياري)", value="")
+            m_group = cB.text_input("اسم المجموعة/المسار (اختياري)", value="")
+
+            st.markdown("**إحداثيات بداية الفرع**")
+            c1, c2 = st.columns(2)
+            lat1 = c1.number_input("خط العرض Lat (بداية)", value=24.713600, format="%.6f", key="man_lat1")
+            lon1 = c2.number_input("خط الطول Lon (بداية)", value=46.675300, format="%.6f", key="man_lon1")
+
+            st.markdown("**إحداثيات نهاية الفرع**")
+            c3, c4 = st.columns(2)
+            lat2 = c3.number_input("خط العرض Lat (نهاية)", value=24.715600, format="%.6f", key="man_lat2")
+            lon2 = c4.number_input("خط الطول Lon (نهاية)", value=46.677300, format="%.6f", key="man_lon2")
+
+            st.markdown("**مواصفات الفرع**")
+            c5, c6 = st.columns(2)
+            dia_opts = sorted(PIPE_PRICES.keys())
+            m_dia = c5.selectbox("القطر (مم)", dia_opts, index=2)
+            m_depth = c6.number_input("العمق (م)", min_value=0.5, max_value=12.0, value=1.5, step=0.1)
+
+            submit_manual = st.form_submit_button("➕ إضافة الفرع إلى الشبكة", use_container_width=True)
+
+        if submit_manual:
+            if abs(lat1 - lat2) < 1e-9 and abs(lon1 - lon2) < 1e-9:
+                st.error("❌ إحداثيات البداية والنهاية متطابقة — الرجاء إدخال نقطتين مختلفتين.")
+            elif not (-90 <= lat1 <= 90 and -90 <= lat2 <= 90 and -180 <= lon1 <= 180 and -180 <= lon2 <= 180):
+                st.error("❌ إحداثيات غير صالحة — تأكد من نطاق خط العرض [-90, 90] وخط الطول [-180, 180].")
+            else:
+                group_label = m_group.strip() or None
+                added = split_and_add_branches(
+                    [(lat1, lon1), (lat2, lon2)],
+                    group_label=group_label,
+                    base_diameter=m_dia,
+                    base_depth=m_depth,
+                )
+                if added:
+                    if m_name.strip():
+                        added[0]["name"] = m_name.strip()
+                    st.success(f"✅ تمت إضافة الفرع {added[0]['code']} بنجاح — الطول: {added[0]['length']:.1f} م")
+                    st.rerun()
+
+        if st.session_state.lines:
+            st.markdown("---")
+            st.markdown("**🗺️ معاينة مباشرة لجميع فروع الشبكة الحالية**")
+            all_c = [pt for ln in st.session_state.lines for pt in ln["coords"]]
+            m_prev = make_base_map(center_of(all_c), 14)
+            Fullscreen(title="ملء الشاشة").add_to(m_prev)
+            for ln in st.session_state.lines:
+                coords = ln.get("coords", [])
+                if coords:
+                    folium.PolyLine(
+                        coords, color="#e63946", weight=4, opacity=0.9,
+                        tooltip=f"{ln.get('code','')} — {ln['name']} — Ø{ln.get('diameter',600)} مم"
+                    ).add_to(m_prev)
+                    folium.CircleMarker(coords[0], radius=5, color="#0a2a5e", fill=True, fillColor="#1a5fa8").add_to(m_prev)
+                    folium.CircleMarker(coords[-1], radius=5, color="#e63946", fill=True, fillColor="#e63946").add_to(m_prev)
+            m_prev.fit_bounds(get_bounds(all_c))
+            st_folium(m_prev, width=None, height=420, key="manual_preview_map")
+
     with sub2:
+        st.markdown("""
+        <div class="info-banner">
+            📌 كل LineString داخل ملف GeoJSON يُقسَّم تلقائياً إلى فروع مستقلة (فرع بين كل نقطتين متتاليتين).
+        </div>
+        """, unsafe_allow_html=True)
         uploaded_geojson = st.file_uploader("اختر ملف GeoJSON", type=["geojson", "json"], key="geo_up")
         if uploaded_geojson:
             try:
                 gj = json.load(uploaded_geojson)
                 features = gj.get("features", [])
-                added = 0
+                added_total = 0
                 for feat in features:
                     geom = feat.get("geometry", {})
                     if geom.get("type") == "LineString":
                         coords = [(c[1], c[0]) for c in geom.get("coordinates", [])]
                         if len(coords) >= 2:
-                            name = feat.get("properties", {}).get("name", f"خط {len(st.session_state.lines)+1}")
-                            st.session_state.lines.append({
-                                "id": str(uuid.uuid4()), "name": name, "code": f"PIPE{len(st.session_state.lines)+1}",
-                                "length": line_length(coords),
-                                "coords": coords, "diameter": 600, "depth": 1.5, "selected": True
-                            })
-                            added += 1
-                renumber_lines()
-                st.session_state.analyzer = None
-                st.session_state.cost = None
-                st.success(f"✅ تمت إضافة {added} خط من GeoJSON")
+                            feat_name = feat.get("properties", {}).get("name")
+                            added_total += len(split_and_add_branches(coords, group_label=feat_name))
+                st.success(f"✅ تمت إضافة {added_total} فرع من ملف GeoJSON")
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ خطأ في الملف: {e}")
 
     with sub3:
+        st.markdown("""
+        <div class="info-banner">
+            📌 كل خط داخل ملف Shapefile يُقسَّم تلقائياً إلى فروع مستقلة (فرع بين كل نقطتين متتاليتين).
+        </div>
+        """, unsafe_allow_html=True)
         if GEOPANDAS_AVAILABLE:
             uploaded_shp = st.file_uploader("اختر ملف ZIP يحتوي على Shapefile", type=["zip"], key="shp_up")
             if uploaded_shp:
@@ -558,21 +719,13 @@ with tabs[1]:
                             gdf = gpd.read_file(shp_path)
                             if gdf.crs and str(gdf.crs) != "EPSG:4326":
                                 gdf = gdf.to_crs("EPSG:4326")
-                            added = 0
+                            added_total = 0
                             for idx, row in gdf.iterrows():
                                 if row.geometry and row.geometry.geom_type == "LineString":
                                     coords = [(lat, lon) for lon, lat in row.geometry.coords]
                                     if len(coords) >= 2:
-                                        st.session_state.lines.append({
-                                            "id": str(uuid.uuid4()), "name": f"خط {len(st.session_state.lines)+1}",
-                                            "code": f"PIPE{len(st.session_state.lines)+1}",
-                                            "length": line_length(coords), "coords": coords, "diameter": 600, "depth": 1.5, "selected": True
-                                        })
-                                        added += 1
-                            renumber_lines()
-                            st.session_state.analyzer = None
-                            st.session_state.cost = None
-                            st.success(f"✅ تمت إضافة {added} خط من Shapefile")
+                                        added_total += len(split_and_add_branches(coords))
+                            st.success(f"✅ تمت إضافة {added_total} فرع من ملف Shapefile")
                             st.rerun()
                 except Exception as e:
                     st.error(f"❌ خطأ: {e}")
@@ -622,7 +775,7 @@ with tabs[2]:
         else:
             focus_c = next(ln["coords"] for ln in st.session_state.lines if ln["name"] == target_focus)
 
-        m_net = folium.Map(location=center_of(focus_c), zoom_start=16, tiles="OpenStreetMap")
+        m_net = make_base_map(center_of(focus_c), 16)
         Fullscreen(title="ملء الشاشة").add_to(m_net)
 
         for e in ana.edges_list:
@@ -805,7 +958,7 @@ with tabs[3]:
         with rep_sub1:
             st.markdown("""<div class="info-banner">🗺️ كروكي تفاعلي ملون حسب أقطار الأنابيب المخصصة لكل فرع.</div>""", unsafe_allow_html=True)
             all_c = [pt for ln in st.session_state.lines for pt in ln["coords"]]
-            m_rep = folium.Map(location=center_of(all_c), zoom_start=14, tiles="OpenStreetMap")
+            m_rep = make_base_map(center_of(all_c), 14)
             Fullscreen().add_to(m_rep)
 
             diameter_legend_added = set()
@@ -839,16 +992,27 @@ with tabs[3]:
             proj_owner = st.text_input("الجهة المالكة للمشروع (يُفضّل بالإنجليزية)", value="Municipality")
             engineer = st.text_input("اسم المهندس المسؤول (يُفضّل بالإنجليزية)", value="")
             
-            st.markdown("#### 🌍 خريطة خلفية OpenStreetMap للتقرير")
+            st.markdown("#### 🌍 خريطة الخلفية داخل التقرير")
             st.markdown("""
             <div class="info-banner">
-            🗺️ سيتم توليد صورة الخريطة تلقائياً بخلفية OpenStreetMap الحقيقية وتضمينها داخل التقرير،
+            🗺️ سيتم توليد صورة الخريطة تلقائياً بخلفية حقيقية حسب النمط الذي تختاره أدناه
+            (شوارع OpenStreetMap، صورة جوية من الأقمار الصناعية، أو نمط آخر) وتضمينها داخل التقرير،
             مع تلوين كل فرع حسب قطره ورسم جميع المناهل عليها. لا حاجة لأي لقطة شاشة يدوية.
             </div>
             """, unsafe_allow_html=True)
-            auto_map = st.checkbox("توليد خريطة OpenStreetMap تلقائياً داخل التقرير", value=True)
+            auto_map = st.checkbox("توليد خريطة الخلفية تلقائياً داخل التقرير", value=True)
+            pdf_style_keys = list(MAP_STYLES.keys())
+            pdf_map_style = DEFAULT_MAP_STYLE
             uploaded_map_img = None
-            if not auto_map:
+            if auto_map:
+                pdf_map_style = st.selectbox(
+                    "نمط خلفية الخريطة في التقرير",
+                    pdf_style_keys,
+                    index=pdf_style_keys.index(st.session_state.map_style) if st.session_state.map_style in pdf_style_keys else 0,
+                    key="pdf_map_style_selector",
+                    help="اختر بين خريطة الشوارع (OpenStreetMap)، صورة جوية من الأقمار الصناعية، أو نمط آخر.",
+                )
+            else:
                 uploaded_map_img = st.file_uploader("أو ارفع لقطة شاشة خريطة بديلة (اختياري)", type=["png", "jpg", "jpeg"])
 
             if st.button("📥 إنشاء وتحميل التقرير الهندسي PDF النهائي", use_container_width=True):
@@ -866,10 +1030,48 @@ with tabs[3]:
                         FONT_REG  = "Helvetica"
                         FONT_BOLD = "Helvetica-Bold"
 
+                        report_ref = f"FNA-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+
                         buf = io.BytesIO()
-                        doc = SimpleDocTemplate(buf, pagesize=landscape(A4), rightMargin=15*mm, leftMargin=15*mm, topMargin=15*mm, bottomMargin=15*mm)
+                        doc = SimpleDocTemplate(buf, pagesize=landscape(A4), rightMargin=15*mm, leftMargin=15*mm, topMargin=15*mm, bottomMargin=20*mm)
 
                         BLUE, LBLUE, GREY, WHITE = colors.HexColor("#0a2a5e"), colors.HexColor("#1a5fa8"), colors.HexColor("#f0f4f8"), colors.white
+                        GOLD = colors.HexColor("#c9962c")
+
+                        # ── Canvas مخصّص لإضافة تذييل احترافي (ترقيم الصفحات + خط علوي) ──
+                        from reportlab.pdfgen import canvas as _pdfcanvas
+
+                        class NumberedCanvas(_pdfcanvas.Canvas):
+                            def __init__(self, *args, **kwargs):
+                                _pdfcanvas.Canvas.__init__(self, *args, **kwargs)
+                                self._saved_page_states = []
+
+                            def showPage(self):
+                                self._saved_page_states.append(dict(self.__dict__))
+                                self._startPage()
+
+                            def save(self):
+                                total_pages = len(self._saved_page_states)
+                                for state in self._saved_page_states:
+                                    self.__dict__.update(state)
+                                    self._draw_footer(total_pages)
+                                    _pdfcanvas.Canvas.showPage(self)
+                                _pdfcanvas.Canvas.save(self)
+
+                            def _draw_footer(self, total_pages):
+                                w, h = landscape(A4)
+                                self.saveState()
+                                self.setStrokeColor(BLUE)
+                                self.setLineWidth(1.1)
+                                self.line(15*mm, 14*mm, w-15*mm, 14*mm)
+                                self.setFont(FONT_BOLD, 8)
+                                self.setFillColor(BLUE)
+                                self.drawString(15*mm, 9*mm, "Flood Network Analyzer")
+                                self.setFont(FONT_REG, 8)
+                                self.setFillColor(colors.HexColor("#6b7a99"))
+                                self.drawCentredString(w/2, 9*mm, f"Report Ref: {report_ref}")
+                                self.drawRightString(w-15*mm, 9*mm, f"Page {self._pageNumber} of {total_pages}")
+                                self.restoreState()
 
                         s_title = ParagraphStyle("title", fontName=FONT_BOLD, fontSize=20, textColor=WHITE, alignment=TA_CENTER, leading=26)
                         s_h2    = ParagraphStyle("h2", fontName=FONT_BOLD, fontSize=14, textColor=BLUE, alignment=TA_LEFT, spaceBefore=10, spaceAfter=6, leading=20)
@@ -899,7 +1101,7 @@ with tabs[3]:
                         # ── Project Information ────────────────────────────
                         info_data = [
                             [P("Owner:"), P(proj_owner), P("Issue Date:"), P(result["generated_at"])],
-                            [P("Responsible Engineer:"), P(engineer or "-"), P("System Version:"), P("Version 15.0")],
+                            [P("Responsible Engineer:"), P(engineer or "-"), P("Report Reference:"), P(report_ref)],
                         ]
                         info_tbl = Table(
                             info_data, colWidths=[45*mm, 90*mm, 40*mm, 90*mm],
@@ -914,19 +1116,52 @@ with tabs[3]:
                         elems.append(info_tbl)
                         elems.append(Spacer(1, 6*mm))
 
-                        # ── Network Map (OpenStreetMap background) ─────────
+                        # ── Executive Summary (KPI cards) ──────────────────
+                        elems.append(P("Executive Summary", s_h2))
+                        elems.append(HRFlowable(width="100%", thickness=1, color=BLUE, spaceAfter=4))
+                        s_kpi_val = ParagraphStyle("kpiv", fontName=FONT_BOLD, fontSize=15, textColor=BLUE, alignment=TA_CENTER, leading=18)
+                        s_kpi_lbl = ParagraphStyle("kpil", fontName=FONT_REG, fontSize=8.5, textColor=colors.HexColor("#6b7a99"), alignment=TA_CENTER, leading=11)
+                        t_mh_sum = sum(e["n_manholes"] for e in result["per_edge"])
+                        t_tr_sum = sum(e["n_traps"] for e in result["per_edge"])
+                        kpi_defs = [
+                            (f"{len(result['per_edge'])}", "Total Branches"),
+                            (f"{result['stat']['length']/1000:.2f} km", "Total Network Length"),
+                            (f"{t_mh_sum}", "Inspection Manholes"),
+                            (f"{t_tr_sum}", "Rainwater Catch Basins"),
+                            (f"{result['total_cost']:,.0f} SAR", "Estimated Total Cost"),
+                        ]
+                        kpi_row = [[Paragraph(v, s_kpi_val) for v, _ in kpi_defs]]
+                        kpi_lbl_row = [[Paragraph(l, s_kpi_lbl) for _, l in kpi_defs]]
+                        kpi_tbl = Table(
+                            kpi_row + kpi_lbl_row, colWidths=[53*mm]*5,
+                            style=[
+                                ('BACKGROUND', (0,0), (-1,-1), GREY),
+                                ('BOX', (0,0), (-1,-1), 0.6, colors.HexColor("#d0d8e8")),
+                                ('LINEAFTER', (0,0), (-2,-1), 0.6, colors.HexColor("#d0d8e8")),
+                                ('TOPPADDING', (0,0), (-1,0), 10),
+                                ('BOTTOMPADDING', (0,0), (-1,0), 2),
+                                ('TOPPADDING', (0,1), (-1,1), 0),
+                                ('BOTTOMPADDING', (0,1), (-1,1), 10),
+                                ('LINEABOVE', (0,0), (-1,0), 3, GOLD),
+                            ]
+                        )
+                        elems.append(kpi_tbl)
+                        elems.append(Spacer(1, 8*mm))
+
+                        # ── Network Map (background per user-selected style) ─
                         if uploaded_map_img:
                             elems.append(P("Network Route Map", s_h2))
                             elems.append(HRFlowable(width="100%", thickness=1, color=BLUE, spaceAfter=4))
                             elems.append(Image(uploaded_map_img, width=260*mm, height=120*mm))
                             elems.append(PageBreak())
                         elif auto_map:
-                            map_png_bytes = render_osm_static_map(
+                            map_png_bytes = render_static_map(
                                 result["per_edge"], ana.nodes_coords, PIPE_COLORS,
-                                width=1600, height=850,
+                                style_key=pdf_map_style, width=1600, height=850,
                             )
                             if map_png_bytes:
-                                elems.append(P("Network Route Map (OpenStreetMap Background)", s_h2))
+                                map_title_en = MAP_STYLES.get(pdf_map_style, MAP_STYLES[DEFAULT_MAP_STYLE])["label_en"]
+                                elems.append(P(f"Network Route Map ({map_title_en} Background)", s_h2))
                                 elems.append(HRFlowable(width="100%", thickness=1, color=BLUE, spaceAfter=4))
                                 elems.append(Image(io.BytesIO(map_png_bytes), width=260*mm, height=138*mm))
 
@@ -940,7 +1175,7 @@ with tabs[3]:
                                 elems.append(PageBreak())
                             else:
                                 elems.append(P(
-                                    "Note: Could not automatically generate the OpenStreetMap background "
+                                    "Note: Could not automatically generate the map background "
                                     "(no connection to map tile servers in this environment). "
                                     "You may disable auto-map generation and upload a map screenshot instead.",
                                     s_norm
@@ -1012,19 +1247,15 @@ with tabs[3]:
                         ]))
                         elems.append(br_tbl)
 
-                        elems.append(Spacer(1, 10*mm))
-                        elems.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#d0d8e8")))
-                        elems.append(P(f"Flood Network Analyzer | Report Generated: {result['generated_at']}", s_footer))
-
-                        doc.build(elems)
+                        doc.build(elems, canvasmaker=NumberedCanvas)
                         buf.seek(0)
 
                         st.download_button(
                             label="📥 اضغط هنا لبدء تحميل ملف التقرير الهندسي PDF المعتمد (باللغة الإنجليزية)", data=buf.getvalue(),
-                            file_name=f"Flood_Network_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                            file_name=f"Flood_Network_Report_{report_ref}.pdf",
                             mime="application/pdf", use_container_width=True
                         )
-                        st.success("✅ تم إنشاء التقرير بنجاح باللغة الإنجليزية — اضغط الزر أعلاه للتحميل.")
+                        st.success("✅ تم إنشاء التقرير بنجاح باللغة الإنجليزية — بتنسيق احترافي مع ترقيم صفحات وخريطة خلفية — اضغط الزر أعلاه للتحميل.")
                     except Exception as ex:
                         st.error(f"❌ خطأ أثناء صياغة مستند الـ PDF: {ex}")
                         import traceback
