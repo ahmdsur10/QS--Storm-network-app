@@ -239,6 +239,31 @@ def line_length(coords):
 def num_traps(length):
     return max(1, round(length / TRAP_SPACING))
 
+def renumber_lines():
+    """يعيد ترقيم جميع الفروع بأسماء رمزية فريدة ومتسلسلة (PIPE1, PIPE2, ...) لتمييزها في الخريطة والبيانات."""
+    for i, ln in enumerate(st.session_state.lines):
+        ln["code"] = f"PIPE{i+1}"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ترجمة أسماء البنود والوحدات إلى الإنجليزية (تُستخدم حصرياً داخل تقرير PDF)
+# ─────────────────────────────────────────────────────────────────────────────
+ITEM_NAME_EN = {
+    "أنابيب صرف خرسانية مدعمة": "Reinforced Concrete Drainage Pipes",
+    "أعمال حفر الخنادق المفتوحة للأنابيب": "Open Trench Excavation Works",
+    "مناهل تفتيش خرسانية دائرية معتمدة": "Approved Circular Concrete Inspection Manholes",
+    "مصائد مياه الأمطار": "Rainwater Catch Basins",
+    "إعادة الردم والتسوية والدمك الإنشائي للمسار": "Backfilling, Grading & Structural Compaction",
+}
+UNIT_NAME_EN = {
+    "متر طولي": "Linear Meter (L.M.)",
+    "عدد": "No.",
+    "متر مكعب": "Cubic Meter (m3)",
+}
+def en_item(name):
+    return ITEM_NAME_EN.get(name, name)
+def en_unit(u):
+    return UNIT_NAME_EN.get(u, u)
+
 def get_bounds(coords):
     lats = [c[0] for c in coords]
     lons = [c[1] for c in coords]
@@ -321,6 +346,7 @@ class NetworkAnalyzer:
                     "end_coord": e,
                     "distance": dist,
                     "line_name": line.get("name", "خط"),
+                    "code": line.get("code", ""),
                     "node_start": sn,
                     "node_end": en,
                     "diameter": line.get("diameter", 600),
@@ -360,8 +386,8 @@ with tabs[0]:
     c1, c2, c3 = st.columns(3)
     steps = [
         ("🗺️", "١ · رسم وإدخال", "ارسم خطوط الشبكة مباشرة على الخريطة أو استورد ملفات GeoJSON / Shapefile"),
-        ("🌐", "٢ · التحليل والتكاليف", "حلل المناهل والفروع، حدّد قطر وعمق مختلف لكل فرع، واحسب الكميات والتكلفة فوراً في نفس المكان"),
-        ("📋", "٣ · التقرير", "تصدير تقرير PDF عربي كامل مع خريطة OpenStreetMap وجداول الكميات والتكاليف"),
+        ("🌐", "٢ · التحليل والتكاليف", "لكل فرع رمز مميز (PIPE1, PIPE2...)، حدّد قطر وعمق مختلف لكل فرع، واحسب الكميات والتكلفة فوراً في نفس المكان"),
+        ("📋", "٣ · التقرير", "تصدير تقرير PDF كامل (باللغة الإنجليزية) مع خريطة OpenStreetMap وجداول الكميات والتكاليف"),
     ]
     for col, (icon, title, desc) in zip([c1, c2, c3], steps):
         with col:
@@ -424,7 +450,7 @@ with tabs[1]:
         for ln in st.session_state.lines:
             coords = ln.get("coords", [])
             if coords:
-                folium.PolyLine(coords, color="#e63946", weight=4, opacity=0.9, tooltip=ln["name"]).add_to(m_draw)
+                folium.PolyLine(coords, color="#e63946", weight=4, opacity=0.9, tooltip=f"{ln.get('code','')} — {ln['name']}").add_to(m_draw)
                 folium.CircleMarker(coords[0], radius=6, color="#0a2a5e", fill=True, fillColor="#1a5fa8").add_to(m_draw)
                 folium.CircleMarker(coords[-1], radius=6, color="#e63946", fill=True, fillColor="#e63946").add_to(m_draw)
 
@@ -452,6 +478,7 @@ with tabs[1]:
                         new_line = {
                             "id": str(uuid.uuid4()),
                             "name": f"خط {len(st.session_state.lines)+1}",
+                            "code": f"PIPE{len(st.session_state.lines)+1}",
                             "length": length,
                             "coords": coords,
                             "diameter": 600,
@@ -459,16 +486,19 @@ with tabs[1]:
                             "selected": True,
                         }
                         st.session_state.lines.append(new_line)
+                        renumber_lines()
                         st.session_state.analyzer = None
                         st.session_state.cost = None
-                        st.success(f"✅ تمت إضافة {new_line['name']}")
+                        st.success(f"✅ تمت إضافة {new_line['code']} — {new_line['name']}")
                         st.rerun()
 
         if st.session_state.lines:
             st.markdown("---")
             st.markdown("**الخطوط المدخلة حالياً:**")
             for i, ln in enumerate(st.session_state.lines):
-                c1_, c2_, c3_ = st.columns([4, 2, 1])
+                c0_, c1_, c2_, c3_ = st.columns([1, 3.5, 2, 1])
+                with c0_:
+                    st.markdown(f"<b>{ln.get('code', f'PIPE{i+1}')}</b>", unsafe_allow_html=True)
                 with c1_:
                     st.session_state.lines[i]["name"] = st.text_input("الاسم", value=ln["name"], key=f"name_{ln['id']}", label_visibility="collapsed")
                 with c2_:
@@ -476,6 +506,7 @@ with tabs[1]:
                 with c3_:
                     if st.button("🗑️", key=f"del_{ln['id']}"):
                         st.session_state.lines.pop(i)
+                        renumber_lines()
                         st.session_state.analyzer = None
                         st.session_state.cost = None
                         st.rerun()
@@ -500,10 +531,12 @@ with tabs[1]:
                         if len(coords) >= 2:
                             name = feat.get("properties", {}).get("name", f"خط {len(st.session_state.lines)+1}")
                             st.session_state.lines.append({
-                                "id": str(uuid.uuid4()), "name": name, "length": line_length(coords),
+                                "id": str(uuid.uuid4()), "name": name, "code": f"PIPE{len(st.session_state.lines)+1}",
+                                "length": line_length(coords),
                                 "coords": coords, "diameter": 600, "depth": 1.5, "selected": True
                             })
                             added += 1
+                renumber_lines()
                 st.session_state.analyzer = None
                 st.session_state.cost = None
                 st.success(f"✅ تمت إضافة {added} خط من GeoJSON")
@@ -532,9 +565,11 @@ with tabs[1]:
                                     if len(coords) >= 2:
                                         st.session_state.lines.append({
                                             "id": str(uuid.uuid4()), "name": f"خط {len(st.session_state.lines)+1}",
+                                            "code": f"PIPE{len(st.session_state.lines)+1}",
                                             "length": line_length(coords), "coords": coords, "diameter": 600, "depth": 1.5, "selected": True
                                         })
                                         added += 1
+                            renumber_lines()
                             st.session_state.analyzer = None
                             st.session_state.cost = None
                             st.success(f"✅ تمت إضافة {added} خط من Shapefile")
@@ -570,17 +605,19 @@ with tabs[2]:
 
         # ── خريطة تحليلية مع تكبير على فرع مختار ──────────────────────────
         st.markdown("#### 🔍 تحديد فرع لعمل تكبير (Zoom) تلقائي عليه")
-        line_names = [ln["name"] for ln in st.session_state.lines]
-        target_focus = st.selectbox(
-            "اختر الخط المراد عمل التكبير والتركيز المباشر عليه:",
-            ["كامل الشبكة"] + line_names,
+        line_labels = [f"{ln.get('code', '')} — {ln['name']}" for ln in st.session_state.lines]
+        label_to_name = {f"{ln.get('code', '')} — {ln['name']}": ln["name"] for ln in st.session_state.lines}
+        target_focus_label = st.selectbox(
+            "اختر الفرع المراد عمل التكبير والتركيز المباشر عليه:",
+            ["كامل الشبكة"] + line_labels,
             key="analysis_focus_select",
         )
+        target_focus = label_to_name.get(target_focus_label, "كامل الشبكة")
 
         st.markdown("#### 🗺️ خريطة الفروع والعقد الهندسية")
 
         full_c = [pt for ln in st.session_state.lines for pt in ln["coords"]]
-        if target_focus == "كامل الشبكة":
+        if target_focus_label == "كامل الشبكة":
             focus_c = full_c
         else:
             focus_c = next(ln["coords"] for ln in st.session_state.lines if ln["name"] == target_focus)
@@ -589,14 +626,14 @@ with tabs[2]:
         Fullscreen(title="ملء الشاشة").add_to(m_net)
 
         for e in ana.edges_list:
-            is_target = (target_focus == "كامل الشبكة" or e["line_name"] == target_focus)
+            is_target = (target_focus_label == "كامل الشبكة" or e["line_name"] == target_focus)
             weight_render  = 8 if is_target else 4
             opacity_render = 1.0 if is_target else 0.35
-            color_render   = "#e63946" if (is_target and target_focus != "كامل الشبكة") else "#1a5fa8"
+            color_render   = "#e63946" if (is_target and target_focus_label != "كامل الشبكة") else "#1a5fa8"
             folium.PolyLine(
                 [e["start_coord"], e["end_coord"]],
                 color=color_render, weight=weight_render, opacity=opacity_render,
-                tooltip=f"{e['line_name']} — Ø{e['diameter']}مم — {e['distance']:.1f} م"
+                tooltip=f"{e.get('code','')} — {e['line_name']} — Ø{e['diameter']}مم — {e['distance']:.1f} م"
             ).add_to(m_net)
 
         for coord, nid in ana.nodes_coords.items():
@@ -611,28 +648,28 @@ with tabs[2]:
 
         st.markdown("---")
 
-        # ── إعداد كل فرع بشكل مستقل (القطر، العمق) ────────────────────────
-        st.markdown("#### ⚙️ مواصفات كل فرع (القطر والعمق)")
+        # ── إعداد كل فرع بشكل مستقل (الرمز، الاسم، القطر، العمق) ───────────
+        st.markdown("#### ⚙️ مواصفات كل فرع على حدة (رمز الفرع، القطر، العمق)")
         st.markdown("""
         <div class="info-banner">
-            📌 حدّد <b>اسم الفرع، القطر (مم)، والعمق (م)</b> بشكل مستقل لكل فرع — يتم احتساب الكميات والتكلفة تلقائياً فور أي تعديل.
+            📌 لكل فرع <b>رمز تعريفي فريد</b> (PIPE1, PIPE2, ...) يظهر على الخريطة وفي جميع الجداول. حدّد
+            <b>القطر (مم) والعمق (م)</b> بشكل مستقل لكل فرع — يُعاد احتساب الكميات والتكلفة تلقائياً وفوراً مع أي تعديل، من هذا المكان فقط.
         </div>
         """, unsafe_allow_html=True)
 
-        hc = st.columns([0.5, 2.5, 1.5, 2, 2])
-        headers = ["#", "اسم الفرع", "الطول (م)", "القطر (مم)", "العمق (م)"]
+        hc = st.columns([1, 2.3, 1.3, 1.8, 1.8])
+        headers = ["الرمز", "اسم الفرع", "الطول (م)", "القطر (مم)", "العمق (م)"]
         for col, txt in zip(hc, headers):
             col.markdown(f"**{txt}**")
         st.markdown("<hr style='margin:8px 0;'>", unsafe_allow_html=True)
 
         for idx, line in enumerate(st.session_state.lines):
-            cols = st.columns([0.5, 2.5, 1.5, 2, 2])
-            cols[0].write(f"**{idx+1}**")
+            cols = st.columns([1, 2.3, 1.3, 1.8, 1.8])
+            cols[0].markdown(f"**{line.get('code', f'PIPE{idx+1}')}**")
 
             new_name = cols[1].text_input("الاسم", value=line["name"], key=f"cost_name_{line['id']}", label_visibility="collapsed")
             if new_name != line["name"]:
                 st.session_state.lines[idx]["name"] = new_name
-                st.session_state.cost = None
 
             cols[2].write(f"{line['length']:.1f} م")
 
@@ -645,7 +682,6 @@ with tabs[2]:
             )
             if selected_dia != current_dia:
                 st.session_state.lines[idx]["diameter"] = selected_dia
-                st.session_state.cost = None
 
             current_depth = float(line.get("depth", 1.5))
             selected_depth = cols[4].number_input(
@@ -654,61 +690,64 @@ with tabs[2]:
             )
             if selected_depth != current_depth:
                 st.session_state.lines[idx]["depth"] = selected_depth
-                st.session_state.cost = None
 
         st.markdown("---")
 
         recalc = st.button("🧮 حساب وتحديث جدول كميات المشروع بالكامل", use_container_width=True)
 
-        # إعادة الحساب تلقائياً إذا تغيّرت أي مواصفة، أو عند الضغط الصريح على الزر
-        if recalc or st.session_state.cost is None:
-            st.session_state.analyzer = NetworkAnalyzer(st.session_state.lines)
-            ana = st.session_state.analyzer
+        # ✅ يُعاد الحساب تلقائياً وبشكل مباشر من مواصفات الفروع أعلاه في كل مرة
+        # (مصدر وحيد للبيانات — لا يوجد أي إدخال مكرر للقطر/العمق في مكان آخر)
+        st.session_state.analyzer = NetworkAnalyzer(st.session_state.lines)
+        ana = st.session_state.analyzer
 
-            all_items = {}
-            per_edge = []
-            stat = ana.stats()
-            total_len = stat["length"]
+        all_items = {}
+        per_edge = []
+        stat = ana.stats()
 
-            for edge in ana.edges_list:
-                d = edge["diameter"]
-                dep = edge["depth"]
-                L = edge["distance"]
-                share = L / total_len if total_len > 0 else 0
-                n_mh = max(1, round(stat["nodes"] * share))
-                n_tr = num_traps(L)
-                p_pipe = PIPE_PRICES.get(d, 725)
+        # عدد المناهل يُشتق مباشرة من بيانات التحليل (عقد الشبكة الفعلية) بحيث
+        # لا يتكرر احتساب نفس المنهل المشترك بين فرعين مرتين، ويكون المجموع مطابقاً
+        # تماماً لعدد "مناهل التفتيش الكلية" الظاهر في مؤشرات التحليل أعلاه.
+        assigned_nodes = set()
+        for edge in ana.edges_list:
+            new_nodes = [n for n in (edge["node_start"], edge["node_end"]) if n not in assigned_nodes]
+            assigned_nodes.update(new_nodes)
+            n_mh = len(new_nodes)
+            n_tr = num_traps(edge["distance"])
 
-                items = [
-                    {"البند": "أنابيب صرف خرسانية مدعمة", "الكمية": L, "الوحدة": "متر طولي", "السعر": p_pipe, "الإجمالي": L * p_pipe},
-                    {"البند": "أعمال حفر الخنادق المفتوحة للأنابيب", "الكمية": L, "الوحدة": "متر طولي", "السعر": EXCAVATION, "الإجمالي": L * EXCAVATION},
-                    {"البند": "مناهل تفتيش خرسانية دائرية معتمدة", "الكمية": n_mh, "الوحدة": "عدد", "السعر": MANHOLE_PRICE, "الإجمالي": n_mh * MANHOLE_PRICE},
-                    {"البند": "مصائد رمل وحطام جغرافية", "الكمية": n_tr, "الوحدة": "عدد", "السعر": TRAP_PRICE, "الإجمالي": n_tr * TRAP_PRICE},
-                    {"البند": "إعادة الردم والتسوية والدمك الإنشائي للمسار", "الكمية": L * dep, "الوحدة": "متر مكعب", "السعر": BACKFILL_PRICE, "الإجمالي": L * dep * BACKFILL_PRICE},
-                ]
+            d = edge["diameter"]
+            dep = edge["depth"]
+            L = edge["distance"]
+            p_pipe = PIPE_PRICES.get(d, 725)
 
-                total = sum(it["الإجمالي"] for it in items)
-                per_edge.append({
-                    "line_name": edge["line_name"], "diameter": d, "depth": dep, "length": L,
-                    "items": items, "total": total, "n_manholes": n_mh, "n_traps": n_tr,
-                    "start_coord": edge["start_coord"], "end_coord": edge["end_coord"]
-                })
+            items = [
+                {"البند": "أنابيب صرف خرسانية مدعمة", "الكمية": L, "الوحدة": "متر طولي", "السعر": p_pipe, "الإجمالي": L * p_pipe},
+                {"البند": "أعمال حفر الخنادق المفتوحة للأنابيب", "الكمية": L, "الوحدة": "متر طولي", "السعر": EXCAVATION, "الإجمالي": L * EXCAVATION},
+                {"البند": "مناهل تفتيش خرسانية دائرية معتمدة", "الكمية": n_mh, "الوحدة": "عدد", "السعر": MANHOLE_PRICE, "الإجمالي": n_mh * MANHOLE_PRICE},
+                {"البند": "مصائد مياه الأمطار", "الكمية": n_tr, "الوحدة": "عدد", "السعر": TRAP_PRICE, "الإجمالي": n_tr * TRAP_PRICE},
+                {"البند": "إعادة الردم والتسوية والدمك الإنشائي للمسار", "الكمية": L * dep, "الوحدة": "متر مكعب", "السعر": BACKFILL_PRICE, "الإجمالي": L * dep * BACKFILL_PRICE},
+            ]
 
-                for it in items:
-                    k = it["البند"]
-                    if k not in all_items:
-                        all_items[k] = {"الكمية": 0, "الإجمالي": 0, "الوحدة": it["الوحدة"]}
-                    all_items[k]["الكمية"] += it["الكمية"]
-                    all_items[k]["الإجمالي"] += it["الإجمالي"]
+            total = sum(it["الإجمالي"] for it in items)
+            per_edge.append({
+                "line_name": edge["line_name"], "code": edge.get("code", ""), "diameter": d, "depth": dep, "length": L,
+                "items": items, "total": total, "n_manholes": n_mh, "n_traps": n_tr,
+                "start_coord": edge["start_coord"], "end_coord": edge["end_coord"]
+            })
 
-            st.session_state.cost = {
-                "per_edge": per_edge, "all_items": all_items,
-                "total_cost": sum(v["الإجمالي"] for v in all_items.values()),
-                "stat": stat, "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M")
-            }
-            if recalc:
-                st.success("✅ تم تحديث كشوفات التكلفة وحساب الكميات الهندسية بنجاح!")
-                st.rerun()
+            for it in items:
+                k = it["البند"]
+                if k not in all_items:
+                    all_items[k] = {"الكمية": 0, "الإجمالي": 0, "الوحدة": it["الوحدة"]}
+                all_items[k]["الكمية"] += it["الكمية"]
+                all_items[k]["الإجمالي"] += it["الإجمالي"]
+
+        st.session_state.cost = {
+            "per_edge": per_edge, "all_items": all_items,
+            "total_cost": sum(v["الإجمالي"] for v in all_items.values()),
+            "stat": stat, "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M")
+        }
+        if recalc:
+            st.success("✅ تم تحديث كشوفات التكلفة وحساب الكميات الهندسية بنجاح!")
 
         # ── عرض نتائج التكاليف ─────────────────────────────────────────────
         if st.session_state.cost:
@@ -720,7 +759,7 @@ with tabs[2]:
             t_tr = sum(e["n_traps"] for e in result["per_edge"])
 
             k1.markdown(f'<div class="kpi-card"><div class="kpi-value">{t_mh}</div><div class="kpi-label">المناهل الكلية</div></div>', unsafe_allow_html=True)
-            k2.markdown(f'<div class="kpi-card"><div class="kpi-value">{t_tr}</div><div class="kpi-label">مصائد الحطام</div></div>', unsafe_allow_html=True)
+            k2.markdown(f'<div class="kpi-card"><div class="kpi-value">{t_tr}</div><div class="kpi-label">مصائد الأمطار</div></div>', unsafe_allow_html=True)
             k3.markdown(f'<div class="kpi-card"><div class="kpi-value">{len(result["per_edge"])}</div><div class="kpi-label">عدد مسارات الفروع</div></div>', unsafe_allow_html=True)
             k4.markdown(f'<div class="kpi-card"><div class="kpi-value">{result["total_cost"]:,.0f}</div><div class="kpi-label">الميزانية الإجمالية التقديرية (SAR)</div></div>', unsafe_allow_html=True)
 
@@ -732,47 +771,15 @@ with tabs[2]:
             with st.expander("📂 استعراض الفواتير التحليلية والكميات لكل فرع على حدة"):
                 st.markdown("""
                 <div class="info-banner">
-                ✏️ يمكنك تعديل القطر والعمق هنا مباشرة لكل فرع لزيادة الدقة — سيُعاد احتساب الكميات والتكلفة فوراً.
+                ℹ️ هذا العرض للاطلاع فقط. لتعديل القطر أو العمق استخدم جدول <b>«مواصفات كل فرع على حدة»</b> أعلاه —
+                فهو المصدر الوحيد للبيانات، وأي تعديل هناك ينعكس فوراً هنا وعلى التكلفة.
                 </div>
                 """, unsafe_allow_html=True)
 
-                # خريطة سريعة من اسم الفرع إلى الخط الأصلي في session_state.lines
-                line_by_name = {ln["name"]: ln for ln in st.session_state.lines}
+                for e in result["per_edge"]:
+                    st.markdown(f"📌 **{e.get('code','')} — {e['line_name']}** — الطول: {e['length']:.1f} م — القطر: Ø{e['diameter']} مم — العمق: {e['depth']} م")
 
-                # 🔧 الإصلاح: إضافة enumerate لجعل المفاتيح فريدة (إصلاح StreamlitDuplicateElementKey)
-                for edge_idx, e in enumerate(result["per_edge"]):  # ✅ أضفنا enumerate
-                    src_line = line_by_name.get(e["line_name"])
-
-                    st.markdown(f"📌 **{e['line_name']}** — الطول: {e['length']:.1f} م")
-
-                    ecol1, ecol2, ecol3 = st.columns([2, 2, 2])
-                    with ecol1:
-                        if src_line is not None:
-                            dia_options = sorted(PIPE_PRICES.keys())
-                            cur_dia = src_line.get("diameter", e["diameter"])
-                            new_dia = st.selectbox(
-                                "القطر (مم)", dia_options,
-                                index=dia_options.index(cur_dia) if cur_dia in dia_options else dia_options.index(600),
-                                key=f"inv_dia_{src_line['id']}_{edge_idx}"  # ✅ مفتاح فريد الآن!
-                            )
-                            if new_dia != cur_dia:
-                                src_line["diameter"] = new_dia
-                                st.session_state.cost = None
-                        else:
-                            st.write(f"القطر: {e['diameter']} مم")
-                    with ecol2:
-                        if src_line is not None:
-                            cur_depth = float(src_line.get("depth", e["depth"]))
-                            new_depth = st.number_input(
-                                "العمق (م)", min_value=0.5, max_value=12.0,
-                                value=cur_depth, step=0.1,
-                                key=f"inv_dep_{src_line['id']}_{edge_idx}"  # ✅ مفتاح فريد الآن!
-                            )
-                            if new_depth != cur_depth:
-                                src_line["depth"] = new_depth
-                                st.session_state.cost = None
-                        else:
-                            st.write(f"العمق: {e['depth']} م")
+                    ecol3, = st.columns([1])
                     with ecol3:
                         st.metric("إجمالي تكلفة الفرع", f"{e['total']:,.0f} ريال")
 
@@ -780,57 +787,8 @@ with tabs[2]:
                     st.dataframe(df_e, use_container_width=True, hide_index=True)
                     st.markdown("<hr style='border-top:1px dashed #9aa4b8;'>", unsafe_allow_html=True)
 
-                if st.session_state.cost is None:
-                    st.warning("⚠️ تم تعديل بعض المواصفات — اضغط الزر أدناه لتحديث جدول الكميات والتكلفة بالكامل.")
-                    if st.button("🧮 إعادة الحساب بعد التعديل", use_container_width=True, key="recalc_from_invoice"):
-                        st.session_state.analyzer = NetworkAnalyzer(st.session_state.lines)
-                        ana2 = st.session_state.analyzer
-                        all_items2 = {}
-                        per_edge2 = []
-                        stat2 = ana2.stats()
-                        total_len2 = stat2["length"]
-
-                        for edge in ana2.edges_list:
-                            d = edge["diameter"]
-                            dep = edge["depth"]
-                            L = edge["distance"]
-                            share = L / total_len2 if total_len2 > 0 else 0
-                            n_mh = max(1, round(stat2["nodes"] * share))
-                            n_tr = num_traps(L)
-                            p_pipe = PIPE_PRICES.get(d, 725)
-
-                            items = [
-                                {"البند": "أنابيب صرف خرسانية مدعمة", "الكمية": L, "الوحدة": "متر طولي", "السعر": p_pipe, "الإجمالي": L * p_pipe},
-                                {"البند": "أعمال حفر الخنادق المفتوحة للأنابيب", "الكمية": L, "الوحدة": "متر طولي", "السعر": EXCAVATION, "الإجمالي": L * EXCAVATION},
-                                {"البند": "مناهل تفتيش خرسانية دائرية معتمدة", "الكمية": n_mh, "الوحدة": "عدد", "السعر": MANHOLE_PRICE, "الإجمالي": n_mh * MANHOLE_PRICE},
-                                {"البند": "مصائد رمل وحطام جغرافية", "الكمية": n_tr, "الوحدة": "عدد", "السعر": TRAP_PRICE, "الإجمالي": n_tr * TRAP_PRICE},
-                                {"البند": "إعادة الردم والتسوية والدمك الإنشائي للمسار", "الكمية": L * dep, "الوحدة": "متر مكعب", "السعر": BACKFILL_PRICE, "الإجمالي": L * dep * BACKFILL_PRICE},
-                            ]
-
-                            total = sum(it["الإجمالي"] for it in items)
-                            per_edge2.append({
-                                "line_name": edge["line_name"], "diameter": d, "depth": dep, "length": L,
-                                "items": items, "total": total, "n_manholes": n_mh, "n_traps": n_tr,
-                                "start_coord": edge["start_coord"], "end_coord": edge["end_coord"]
-                            })
-
-                            for it in items:
-                                k = it["البند"]
-                                if k not in all_items2:
-                                    all_items2[k] = {"الكمية": 0, "الإجمالي": 0, "الوحدة": it["الوحدة"]}
-                                all_items2[k]["الكمية"] += it["الكمية"]
-                                all_items2[k]["الإجمالي"] += it["الإجمالي"]
-
-                        st.session_state.cost = {
-                            "per_edge": per_edge2, "all_items": all_items2,
-                            "total_cost": sum(v["الإجمالي"] for v in all_items2.values()),
-                            "stat": stat2, "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M")
-                        }
-                        st.success("✅ تم تحديث الكميات والتكلفة بالمواصفات الجديدة!")
-                        st.rerun()
-
             st.markdown("#### 📋 قائمة فروع الشبكة المحللة")
-            rows = [{"اسم الفرع الهيدروليكي": e["line_name"], "طول الفرع (م)": f"{e['distance']:.2f}", "منهل البداية": f"منهل #{e['node_start']}", "منهل النهاية": f"منهل #{e['node_end']}"} for e in ana.edges_list]
+            rows = [{"رمز الفرع": e.get("code", ""), "اسم الفرع الهيدروليكي": e["line_name"], "طول الفرع (م)": f"{e['distance']:.2f}", "منهل البداية": f"منهل #{e['node_start']}", "منهل النهاية": f"منهل #{e['node_end']}"} for e in ana.edges_list]
             st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
 # التبويب 3: التقرير والطباعة
@@ -856,7 +814,7 @@ with tabs[3]:
                 color = PIPE_COLORS.get(d, "#1a5fa8")
                 folium.PolyLine(
                     [edge_r["start_coord"], edge_r["end_coord"]], color=color, weight=6, opacity=0.9,
-                    popup=f"<b>{edge_r['line_name']}</b><br>القطر: {d}مم<br>العمق: {edge_r['depth']}م<br>التكلفة: {edge_r['total']:,.0f} SAR"
+                    popup=f"<b>{edge_r.get('code','')} — {edge_r['line_name']}</b><br>القطر: {d}مم<br>العمق: {edge_r['depth']}م<br>التكلفة: {edge_r['total']:,.0f} SAR"
                 ).add_to(m_rep)
                 diameter_legend_added.add(d)
 
@@ -871,9 +829,15 @@ with tabs[3]:
             st_folium(m_rep, width=None, height=550, key="report_map")
 
         with rep_sub2:
-            proj_name = st.text_input("اسم المشروع الرسمي بالتقرير", value="مشروع شبكة صرف سيلي متكامل")
-            proj_owner = st.text_input("الجهة المالكة للمشروع", value="أمانة المنطقة")
-            engineer = st.text_input("اسم المهندس المسؤول", value="")
+            st.markdown("""
+            <div class="info-banner">
+            ℹ️ تقرير الـ PDF النهائي يُصاغ باللغة الإنجليزية فقط لتفادي مشكلة عرض الخط العربي داخل الملف.
+            يُفضّل كتابة اسم المشروع والجهة المالكة واسم المهندس أدناه بأحرف إنجليزية ليظهروا بشكل صحيح في التقرير.
+            </div>
+            """, unsafe_allow_html=True)
+            proj_name = st.text_input("اسم المشروع الرسمي بالتقرير (يُفضّل بالإنجليزية)", value="Integrated Flood Drainage Network Project")
+            proj_owner = st.text_input("الجهة المالكة للمشروع (يُفضّل بالإنجليزية)", value="Municipality")
+            engineer = st.text_input("اسم المهندس المسؤول (يُفضّل بالإنجليزية)", value="")
             
             st.markdown("#### 🌍 خريطة خلفية OpenStreetMap للتقرير")
             st.markdown("""
@@ -895,14 +859,12 @@ with tabs[3]:
                         from reportlab.lib.units import mm
                         from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, HRFlowable, PageBreak, Image
                         from reportlab.lib.styles import ParagraphStyle
-                        from reportlab.lib.enums import TA_CENTER, TA_RIGHT
+                        from reportlab.lib.enums import TA_CENTER, TA_LEFT
 
-                        # تسجيل خط Amiri العربي (يدعم التشكيل والاتصال الصحيح للحروف)
-                        font_ok = register_arabic_fonts()
-                        if not font_ok:
-                            st.warning("⚠️ تعذّر تحميل خط Amiri العربي — سيتم استخدام خط افتراضي قد لا يعرض العربية بشكل صحيح.")
-                        FONT_REG  = ARABIC_FONT_REGULAR if font_ok else "Helvetica"
-                        FONT_BOLD = ARABIC_FONT_BOLD if font_ok else "Helvetica-Bold"
+                        # ملاحظة: التقرير النهائي (PDF) يُصاغ بالكامل باللغة الإنجليزية بخطوط
+                        # Helvetica القياسية المدعومة أصلاً في ReportLab، لتفادي مشكلة عرض الخط العربي.
+                        FONT_REG  = "Helvetica"
+                        FONT_BOLD = "Helvetica-Bold"
 
                         buf = io.BytesIO()
                         doc = SimpleDocTemplate(buf, pagesize=landscape(A4), rightMargin=15*mm, leftMargin=15*mm, topMargin=15*mm, bottomMargin=15*mm)
@@ -910,22 +872,21 @@ with tabs[3]:
                         BLUE, LBLUE, GREY, WHITE = colors.HexColor("#0a2a5e"), colors.HexColor("#1a5fa8"), colors.HexColor("#f0f4f8"), colors.white
 
                         s_title = ParagraphStyle("title", fontName=FONT_BOLD, fontSize=20, textColor=WHITE, alignment=TA_CENTER, leading=26)
-                        s_h2    = ParagraphStyle("h2", fontName=FONT_BOLD, fontSize=14, textColor=BLUE, alignment=TA_RIGHT, spaceBefore=10, spaceAfter=6, leading=20)
-                        s_norm  = ParagraphStyle("n", fontName=FONT_REG, fontSize=10, alignment=TA_RIGHT, leading=15)
-                        s_cell  = ParagraphStyle("cell", fontName=FONT_REG, fontSize=9.5, alignment=TA_RIGHT, leading=14)
+                        s_h2    = ParagraphStyle("h2", fontName=FONT_BOLD, fontSize=14, textColor=BLUE, alignment=TA_LEFT, spaceBefore=10, spaceAfter=6, leading=20)
+                        s_norm  = ParagraphStyle("n", fontName=FONT_REG, fontSize=10, alignment=TA_LEFT, leading=15)
+                        s_cell  = ParagraphStyle("cell", fontName=FONT_REG, fontSize=9.5, alignment=TA_LEFT, leading=14)
                         s_cell_b= ParagraphStyle("cellb", fontName=FONT_BOLD, fontSize=9.5, textColor=WHITE, alignment=TA_CENTER, leading=14)
                         s_cell_c= ParagraphStyle("cellc", fontName=FONT_REG, fontSize=9.5, alignment=TA_CENTER, leading=14)
                         s_footer= ParagraphStyle("f", fontName=FONT_REG, fontSize=8, textColor=colors.grey, alignment=TA_CENTER)
 
                         def P(text, style=s_cell):
-                            """فقرة بنص عربي مُشكَّل بشكل صحيح."""
-                            return Paragraph(ar(text), style)
+                            return Paragraph(str(text), style)
 
                         elems = []
 
-                        # ── غلاف التقرير ──────────────────────────────────
+                        # ── Report Cover ───────────────────────────────────
                         elems.append(Table(
-                            [[Paragraph(f"{ar(proj_name)}<br/><font size=11>{ar('تقرير هندسي - شبكة صرف سيول')}</font>", s_title)]],
+                            [[Paragraph(f"{proj_name}<br/><font size=11>Engineering Report - Flood Drainage Network</font>", s_title)]],
                             colWidths=[265*mm],
                             style=[
                                 ('BACKGROUND', (0,0), (-1,-1), BLUE),
@@ -935,10 +896,10 @@ with tabs[3]:
                         ))
                         elems.append(Spacer(1, 6*mm))
 
-                        # ── معلومات المشروع ───────────────────────────────
+                        # ── Project Information ────────────────────────────
                         info_data = [
-                            [P("الجهة المالكة:"), P(proj_owner), P("تاريخ الإصدار:"), P(result["generated_at"])],
-                            [P("المهندس المسؤول:"), P(engineer or "—"), P("إصدار النظام:"), P("الإصدار 15.0")],
+                            [P("Owner:"), P(proj_owner), P("Issue Date:"), P(result["generated_at"])],
+                            [P("Responsible Engineer:"), P(engineer or "-"), P("System Version:"), P("Version 15.0")],
                         ]
                         info_tbl = Table(
                             info_data, colWidths=[45*mm, 90*mm, 40*mm, 90*mm],
@@ -953,9 +914,9 @@ with tabs[3]:
                         elems.append(info_tbl)
                         elems.append(Spacer(1, 6*mm))
 
-                        # ── خريطة الشبكة بخلفية OpenStreetMap ─────────────
+                        # ── Network Map (OpenStreetMap background) ─────────
                         if uploaded_map_img:
-                            elems.append(P("مخطط مسارات الشبكة الجغرافي", s_h2))
+                            elems.append(P("Network Route Map", s_h2))
                             elems.append(HRFlowable(width="100%", thickness=1, color=BLUE, spaceAfter=4))
                             elems.append(Image(uploaded_map_img, width=260*mm, height=120*mm))
                             elems.append(PageBreak())
@@ -965,39 +926,40 @@ with tabs[3]:
                                 width=1600, height=850,
                             )
                             if map_png_bytes:
-                                elems.append(P("مخطط مسارات الشبكة الجغرافي (خلفية OpenStreetMap)", s_h2))
+                                elems.append(P("Network Route Map (OpenStreetMap Background)", s_h2))
                                 elems.append(HRFlowable(width="100%", thickness=1, color=BLUE, spaceAfter=4))
                                 elems.append(Image(io.BytesIO(map_png_bytes), width=260*mm, height=138*mm))
 
                                 legend_used = sorted({e["diameter"] for e in result["per_edge"]})
                                 legend_text = "   ".join(
-                                    f'<font color="{PIPE_COLORS.get(d,"#1a5fa8")}">■</font> Ø{d} {ar("مم")}'
+                                    f'<font color="{PIPE_COLORS.get(d,"#1a5fa8")}">■</font> D{d} mm'
                                     for d in legend_used
-                                ) + f'   <font color="#e63946">●</font> {ar("منهل تفتيش")}'
+                                ) + '   <font color="#e63946">●</font> Inspection Manhole'
                                 elems.append(Spacer(1, 2*mm))
                                 elems.append(Table([[Paragraph(legend_text, s_norm)]], colWidths=[260*mm]))
                                 elems.append(PageBreak())
                             else:
                                 elems.append(P(
-                                    "⚠ تعذّر توليد خريطة OpenStreetMap تلقائياً (لا يوجد اتصال بخوادم البلاطات في هذه البيئة). "
-                                    "يمكنك إيقاف خيار التوليد التلقائي ورفع لقطة شاشة بديلة.",
+                                    "Note: Could not automatically generate the OpenStreetMap background "
+                                    "(no connection to map tile servers in this environment). "
+                                    "You may disable auto-map generation and upload a map screenshot instead.",
                                     s_norm
                                 ))
                                 elems.append(Spacer(1, 6*mm))
 
-                        # ── جدول الكميات الإجمالي ─────────────────────────
-                        elems.append(P("جدول الكميات والتكاليف الإجمالي للمشروع — أولاً", s_h2))
-                        boq_header = [P("البند", s_cell_b), P("الكمية", s_cell_b), P("الوحدة", s_cell_b), P("الإجمالي (ريال)", s_cell_b)]
+                        # ── Total Bill of Quantities (BOQ) ─────────────────
+                        elems.append(P("1. Project Total Bill of Quantities & Costs", s_h2))
+                        boq_header = [P("Item", s_cell_b), P("Quantity", s_cell_b), P("Unit", s_cell_b), P("Total (SAR)", s_cell_b)]
                         boq_data = [boq_header]
                         for name, d in result["all_items"].items():
                             boq_data.append([
-                                P(name),
+                                P(en_item(name)),
                                 P(f"{d['الكمية']:,.2f}", s_cell_c),
-                                P(d.get("الوحدة", ""), s_cell_c),
+                                P(en_unit(d.get("الوحدة", "")), s_cell_c),
                                 P(f"{d['الإجمالي']:,.0f}", s_cell_c),
                             ])
                         boq_data.append([
-                            P("الإجمالي الكلي للمشروع", ParagraphStyle("totlbl", fontName=FONT_BOLD, fontSize=11, textColor=WHITE, alignment=TA_RIGHT)),
+                            P("Project Grand Total", ParagraphStyle("totlbl", fontName=FONT_BOLD, fontSize=11, textColor=WHITE, alignment=TA_LEFT)),
                             Paragraph("", s_cell_c), Paragraph("", s_cell_c),
                             P(f"{result['total_cost']:,.0f}", ParagraphStyle("totval", fontName=FONT_BOLD, fontSize=11, textColor=WHITE, alignment=TA_CENTER)),
                         ])
@@ -1015,17 +977,18 @@ with tabs[3]:
                         elems.append(boq_tbl)
                         elems.append(PageBreak())
 
-                        # ── جدول تفاصيل كل فرع ─────────────────────────────
-                        elems.append(P("المواصفات الفنية لكل فرع على حدة — ثانياً", s_h2))
+                        # ── Per-Branch Technical Specifications ────────────
+                        elems.append(P("2. Technical Specifications per Branch", s_h2))
                         branch_header = [
-                            P("اسم الفرع", s_cell_b), P("الطول (م)", s_cell_b),
-                            P("القطر (مم)", s_cell_b), P("العمق (م)", s_cell_b),
-                            P("المناهل", s_cell_b), P("المصائد", s_cell_b),
-                            P("التكلفة (ريال)", s_cell_b),
+                            P("Code", s_cell_b), P("Branch Name", s_cell_b), P("Length (m)", s_cell_b),
+                            P("Diameter (mm)", s_cell_b), P("Depth (m)", s_cell_b),
+                            P("Manholes", s_cell_b), P("Catch Basins", s_cell_b),
+                            P("Cost (SAR)", s_cell_b),
                         ]
                         branch_data = [branch_header]
                         for e in result["per_edge"]:
                             branch_data.append([
+                                P(e.get("code", "")),
                                 P(e["line_name"]),
                                 P(f"{e['length']:.1f}", s_cell_c),
                                 P(str(e["diameter"]), s_cell_c),
@@ -1037,7 +1000,7 @@ with tabs[3]:
 
                         br_tbl = Table(
                             branch_data,
-                            colWidths=[55*mm, 30*mm, 30*mm, 30*mm, 25*mm, 25*mm, 45*mm],
+                            colWidths=[22*mm, 45*mm, 25*mm, 28*mm, 25*mm, 22*mm, 25*mm, 43*mm],
                             repeatRows=1,
                         )
                         br_tbl.setStyle(TableStyle([
@@ -1051,17 +1014,17 @@ with tabs[3]:
 
                         elems.append(Spacer(1, 10*mm))
                         elems.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#d0d8e8")))
-                        elems.append(P(f"محلل شبكات السيول | تاريخ إصدار التقرير: {result['generated_at']}", s_footer))
+                        elems.append(P(f"Flood Network Analyzer | Report Generated: {result['generated_at']}", s_footer))
 
                         doc.build(elems)
                         buf.seek(0)
 
                         st.download_button(
-                            label="📥 اضغط هنا لبدء تحميل ملف التقرير الهندسي PDF المعتمد", data=buf.getvalue(),
-                            file_name=f"تقرير_شبكة_السيول_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                            label="📥 اضغط هنا لبدء تحميل ملف التقرير الهندسي PDF المعتمد (باللغة الإنجليزية)", data=buf.getvalue(),
+                            file_name=f"Flood_Network_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
                             mime="application/pdf", use_container_width=True
                         )
-                        st.success("✅ تم إنشاء التقرير بنجاح بخط عربي سليم — اضغط الزر أعلاه للتحميل.")
+                        st.success("✅ تم إنشاء التقرير بنجاح باللغة الإنجليزية — اضغط الزر أعلاه للتحميل.")
                     except Exception as ex:
                         st.error(f"❌ خطأ أثناء صياغة مستند الـ PDF: {ex}")
                         import traceback
