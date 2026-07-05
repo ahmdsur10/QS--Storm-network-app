@@ -220,6 +220,7 @@ TRAP_PRICE     = 2_000
 EXCAVATION     = 50      
 BACKFILL_PRICE = 30      
 TRAP_SPACING   = 35      
+MAX_SEGMENT_LENGTH = 100   # الحد الأقصى لطول أي ضلع بين منهولين (متر) — أي جزء أطول يُقسَّم تلقائياً أثناء التحليل
 
 # ─────────────────────────────────────────────────────────────────────────────
 # أنماط خلفية الخريطة (تُستخدم في الخرائط التفاعلية وفي خريطة تقرير الـ PDF)
@@ -269,6 +270,25 @@ def line_length(coords):
 
 def num_traps(length):
     return max(1, round(length / TRAP_SPACING))
+
+def split_long_segment(s, e, max_len=MAX_SEGMENT_LENGTH):
+    """
+    يقسّم أي ضلع (بين نقطتين) يتجاوز طوله max_len إلى نقاط وسيطة متساوية المسافة،
+    بحيث لا يتجاوز طول أي جزء ناتج القيمة المحددة (افتراضياً 100 متر).
+    يعيد قائمة نقاط متسلسلة تبدأ بـ s وتنتهي بـ e (تشمل النقاط الوسيطة الجديدة إن وُجدت).
+    كل نقطة وسيطة تمثل موضع منهول تلقائي على المسار.
+    """
+    dist = haversine(s, e)
+    if dist <= max_len or dist == 0:
+        return [s, e]
+    n_parts = math.ceil(dist / max_len)
+    pts = []
+    for i in range(n_parts + 1):
+        f = i / n_parts
+        lat = s[0] + (e[0] - s[0]) * f
+        lon = s[1] + (e[1] - s[1]) * f
+        pts.append((lat, lon))
+    return pts
 
 def renumber_lines():
     """يعيد ترقيم جميع الفروع بأسماء رمزية فريدة ومتسلسلة (PIPE1, PIPE2, ...) لتمييزها في الخريطة والبيانات."""
@@ -409,29 +429,37 @@ class NetworkAnalyzer:
             if len(coords) < 2:
                 continue
             for i in range(len(coords)-1):
-                s = tuple(coords[i][:2])
-                e = tuple(coords[i+1][:2])
-                for pt in (s, e):
-                    if pt not in self.nodes_coords:
-                        self.nodes_coords[pt] = nid
-                        self.G.add_node(nid)
-                        nid += 1
-                dist = haversine(coords[i], coords[i+1])
-                sn, en = self.nodes_coords[s], self.nodes_coords[e]
-                self.G.add_edge(sn, en, distance=dist)
-                
-                self.edges_list.append({
-                    "id": line["id"],
-                    "start_coord": s,
-                    "end_coord": e,
-                    "distance": dist,
-                    "line_name": line.get("name", "خط"),
-                    "code": line.get("code", ""),
-                    "node_start": sn,
-                    "node_end": en,
-                    "diameter": line.get("diameter", 600),
-                    "depth": line.get("depth", 1.5),
-                })
+                raw_s = tuple(coords[i][:2])
+                raw_e = tuple(coords[i+1][:2])
+
+                # 🔹 أي ضلع أطول من MAX_SEGMENT_LENGTH (100م) يُقسَّم تلقائياً إلى
+                # أجزاء متساوية، وكل نقطة تقسيم تصبح منهولاً (عقدة) في الشبكة.
+                sub_points = split_long_segment(raw_s, raw_e, MAX_SEGMENT_LENGTH)
+
+                for j in range(len(sub_points) - 1):
+                    s = sub_points[j]
+                    e = sub_points[j + 1]
+                    for pt in (s, e):
+                        if pt not in self.nodes_coords:
+                            self.nodes_coords[pt] = nid
+                            self.G.add_node(nid)
+                            nid += 1
+                    dist = haversine(s, e)
+                    sn, en = self.nodes_coords[s], self.nodes_coords[e]
+                    self.G.add_edge(sn, en, distance=dist)
+
+                    self.edges_list.append({
+                        "id": line["id"],
+                        "start_coord": s,
+                        "end_coord": e,
+                        "distance": dist,
+                        "line_name": line.get("name", "خط"),
+                        "code": line.get("code", ""),
+                        "node_start": sn,
+                        "node_end": en,
+                        "diameter": line.get("diameter", 600),
+                        "depth": line.get("depth", 1.5),
+                    })
 
     def stats(self):
         return {
