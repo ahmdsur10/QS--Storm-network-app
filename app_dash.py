@@ -20,6 +20,92 @@ try:
 except Exception:
     GEOPANDAS_AVAILABLE = False
 
+# ─────────────────────────────────────────────────────────────────────────────
+# دعم الاتصال بقاعدة بيانات PostGIS (PostgreSQL) وقراءة طبقات البوليقون منها
+# ─────────────────────────────────────────────────────────────────────────────
+try:
+    from sqlalchemy import create_engine, text as sqla_text
+    import psycopg2  # noqa: F401  (يُستخدم كمحرّك اتصال من طرف SQLAlchemy)
+    POSTGIS_AVAILABLE = True and GEOPANDAS_AVAILABLE
+except Exception:
+    POSTGIS_AVAILABLE = False
+
+
+def pg_get_engine(host, port, dbname, user, password):
+    """ينشئ محرّك اتصال SQLAlchemy بقاعدة بيانات PostgreSQL/PostGIS."""
+    uri = f"postgresql+psycopg2://{user}:{password}@{host}:{port}/{dbname}"
+    return create_engine(uri, pool_pre_ping=True)
+
+
+def pg_test_connection(engine):
+    """يتحقق من نجاح الاتصال ومن تفعيل امتداد PostGIS في القاعدة."""
+    with engine.connect() as conn:
+        conn.execute(sqla_text("SELECT 1"))
+        try:
+            row = conn.execute(sqla_text("SELECT PostGIS_Version()")).fetchone()
+            postgis_version = row[0] if row else None
+        except Exception:
+            postgis_version = None
+    return postgis_version
+
+
+def pg_list_tables(engine, schema="public"):
+    """يجلب قائمة الجداول المتاحة في السكيمة المحددة (لتسهيل اختيار الجدول)."""
+    q = sqla_text("""
+        SELECT table_name FROM information_schema.tables
+        WHERE table_schema = :schema ORDER BY table_name
+    """)
+    with engine.connect() as conn:
+        rows = conn.execute(q, {"schema": schema}).fetchall()
+    return [r[0] for r in rows]
+
+
+def pg_detect_geom_column(engine, table_name, schema="public"):
+    """يحدد اسم عمود الهندسة (geometry) لجدول معيّن من جدول geometry_columns الخاص بـ PostGIS."""
+    q = sqla_text("""
+        SELECT f_geometry_column, type FROM geometry_columns
+        WHERE f_table_name = :t AND f_table_schema = :s
+    """)
+    with engine.connect() as conn:
+        rows = conn.execute(q, {"t": table_name, "s": schema}).fetchall()
+    if rows:
+        return rows[0][0], rows[0][1]
+    return "geom", None
+
+
+def pg_load_polygon_layer(engine, table_name, schema="public", geom_col=None, where_clause=None):
+    """
+    يقرأ طبقة بوليقون (Polygon/MultiPolygon) كاملة من قاعدة PostGIS كـ GeoDataFrame.
+    يعيد إسقاط الطبقة تلقائياً إلى EPSG:4326 لتتوافق مع خرائط folium.
+    """
+    if geom_col is None:
+        geom_col, _ = pg_detect_geom_column(engine, table_name, schema)
+
+    sql = f'SELECT * FROM "{schema}"."{table_name}"'
+    if where_clause and where_clause.strip():
+        sql += f" WHERE {where_clause}"
+
+    gdf = gpd.read_postgis(sql, engine, geom_col=geom_col)
+    if gdf.crs and str(gdf.crs).upper() != "EPSG:4326":
+        gdf = gdf.to_crs("EPSG:4326")
+    return gdf
+
+
+def pg_run_query(engine, sql_query, geom_col_guess="geom"):
+    """
+    ينفذ استعلام SQL حر على القاعدة.
+    - إن كانت نتيجة الاستعلام تحتوي على عمود هندسة (geometry) يعيدها كـ GeoDataFrame.
+    - غير ذلك يعيدها كـ DataFrame عادي (جدول بيانات فقط بدون خريطة).
+    """
+    try:
+        gdf = gpd.read_postgis(sql_query, engine, geom_col=geom_col_guess)
+        if gdf.crs and str(gdf.crs).upper() != "EPSG:4326":
+            gdf = gdf.to_crs("EPSG:4326")
+        return gdf, "geo"
+    except Exception:
+        df = pd.read_sql(sql_query, engine)
+        return df, "table"
+
 try:
     from staticmap import StaticMap, Line as SMLine, CircleMarker as SMCircle
     STATICMAP_AVAILABLE = True
@@ -97,6 +183,15 @@ if "analyzer" not in st.session_state:
 
 if "lines" not in st.session_state:
     st.session_state.lines = []
+
+if "pg_engine" not in st.session_state:
+    st.session_state.pg_engine = None
+
+if "pg_gdf" not in st.session_state:
+    st.session_state.pg_gdf = None
+
+if "pg_query_result" not in st.session_state:
+    st.session_state.pg_query_result = None
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CSS
@@ -487,6 +582,7 @@ TAB_LABELS = [
     "🗺️ ١ · رسم وإدخال",
     "🌐 ٢ · التحليل والتكاليف",
     "📋 ٣ · التقرير والطباعة",
+    "🗄️ ٤ · قاعدة بيانات PostGIS",
 ]
 tabs = st.tabs(TAB_LABELS)
 
@@ -1288,6 +1384,176 @@ with tabs[3]:
                         st.error(f"❌ خطأ أثناء صياغة مستند الـ PDF: {ex}")
                         import traceback
                         st.text(traceback.format_exc())
+
+# التبويب 4: قاعدة بيانات PostGIS
+with tabs[4]:
+    st.markdown("<div class='section-title'>🗄️ الاتصال بقاعدة بيانات PostGIS وقراءة طبقة البوليقون</div>", unsafe_allow_html=True)
+
+    if not POSTGIS_AVAILABLE:
+        st.error(
+            "❌ الاتصال بـ PostGIS يتطلب تثبيت مكتبتي `sqlalchemy` و `psycopg2-binary` بالإضافة إلى `geopandas`.\n\n"
+            "ثبّتها عبر:  `pip install sqlalchemy psycopg2-binary geopandas`"
+        )
+    else:
+        st.markdown("""
+        <div class="info-banner">
+            📌 هذا القسم يتصل مباشرة بقاعدة بيانات <b>PostgreSQL/PostGIS</b> المثبتة على جهازك،
+            ويقرأ طبقة البوليقون من الجدول المحدد (افتراضياً <b>floodcalc → V6</b>)،
+            كما يتيح لك تنفيذ أي استعلام SQL/PostGIS مباشرة على القاعدة.
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown("**⚙️ إعدادات الاتصال بقاعدة البيانات**")
+        cc1, cc2, cc3 = st.columns(3)
+        pg_host = cc1.text_input("Host", value="localhost", key="pg_host")
+        pg_port = cc2.text_input("Port", value="5432", key="pg_port")
+        pg_dbname = cc3.text_input("اسم قاعدة البيانات (Database)", value="floodcalc", key="pg_dbname")
+
+        cc4, cc5, cc6 = st.columns(3)
+        pg_user = cc4.text_input("اسم المستخدم (User)", value="postgres", key="pg_user")
+        pg_password = cc5.text_input("كلمة المرور (Password)", value="", type="password", key="pg_password")
+        pg_schema = cc6.text_input("السكيمة (Schema)", value="public", key="pg_schema")
+
+        cc7, cc8 = st.columns(2)
+        pg_table = cc7.text_input("اسم الجدول/الطبقة (Table)", value="V6", key="pg_table")
+        pg_where = cc8.text_input("شرط WHERE (اختياري)", value="", key="pg_where",
+                                   placeholder="مثال: area_id = 3")
+
+        btn_c1, btn_c2 = st.columns(2)
+        connect_clicked = btn_c1.button("🔌 اتصال واختبار القاعدة", use_container_width=True)
+        load_clicked = btn_c2.button("📥 تحميل طبقة البوليقون من الجدول", use_container_width=True)
+
+        if connect_clicked:
+            try:
+                engine = pg_get_engine(pg_host, pg_port, pg_dbname, pg_user, pg_password)
+                pg_version = pg_test_connection(engine)
+                st.session_state.pg_engine = engine
+                if pg_version:
+                    st.success(f"✅ تم الاتصال بنجاح بقاعدة البيانات '{pg_dbname}' — إصدار PostGIS: {pg_version}")
+                else:
+                    st.warning(
+                        f"⚠️ تم الاتصال بقاعدة البيانات '{pg_dbname}' لكن لم يتم العثور على امتداد PostGIS مفعّلاً. "
+                        "شغّل الأمر التالي داخل القاعدة: CREATE EXTENSION postgis;"
+                    )
+                try:
+                    tbls = pg_list_tables(engine, pg_schema)
+                    if tbls:
+                        st.caption("📋 الجداول المتاحة في هذه السكيمة: " + "، ".join(tbls))
+                except Exception:
+                    pass
+            except Exception as e:
+                st.session_state.pg_engine = None
+                st.error(f"❌ فشل الاتصال بقاعدة البيانات: {e}")
+
+        if load_clicked:
+            try:
+                engine = st.session_state.pg_engine or pg_get_engine(pg_host, pg_port, pg_dbname, pg_user, pg_password)
+                st.session_state.pg_engine = engine
+                with st.spinner("⏳ جارٍ تحميل طبقة البوليقون من القاعدة..."):
+                    gdf = pg_load_polygon_layer(
+                        engine, table_name=pg_table, schema=pg_schema,
+                        where_clause=pg_where if pg_where.strip() else None,
+                    )
+                st.session_state.pg_gdf = gdf
+                st.success(f"✅ تم تحميل {len(gdf)} معلم (feature) من الجدول \"{pg_schema}\".\"{pg_table}\"")
+            except Exception as e:
+                st.error(f"❌ خطأ أثناء تحميل الطبقة: {e}")
+                import traceback
+                st.text(traceback.format_exc())
+
+        # ── عرض طبقة البوليقون المحمّلة على الخريطة والجدول ─────────────────
+        if st.session_state.pg_gdf is not None and len(st.session_state.pg_gdf) > 0:
+            gdf = st.session_state.pg_gdf
+            st.markdown("---")
+            st.markdown(f"**🗺️ عرض طبقة \"{pg_table}\" على الخريطة** ({len(gdf)} معلم)")
+
+            geom_col = gdf.geometry.name
+            bounds = gdf.total_bounds  # minx, miny, maxx, maxy
+            center = [(bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2]
+
+            m_pg = make_base_map(center, 13)
+            Fullscreen(title="ملء الشاشة").add_to(m_pg)
+
+            non_geom_cols = [c for c in gdf.columns if c != geom_col]
+            tooltip_fields = non_geom_cols[:4] if non_geom_cols else None
+
+            folium.GeoJson(
+                gdf.to_json(),
+                name=pg_table,
+                style_function=lambda x: {
+                    "fillColor": "#1a5fa8", "color": "#0a2a5e",
+                    "weight": 1.5, "fillOpacity": 0.35,
+                },
+                tooltip=folium.GeoJsonTooltip(fields=tooltip_fields) if tooltip_fields else None,
+            ).add_to(m_pg)
+
+            try:
+                m_pg.fit_bounds([[bounds[1], bounds[0]], [bounds[3], bounds[2]]])
+            except Exception:
+                pass
+
+            st_folium(m_pg, width=None, height=520, key="postgis_layer_map")
+
+            with st.expander("📊 عرض جدول بيانات الطبقة (Attribute Table)"):
+                st.dataframe(gdf.drop(columns=[geom_col]), use_container_width=True)
+
+            csv_bytes = gdf.drop(columns=[geom_col]).to_csv(index=False).encode("utf-8-sig")
+            st.download_button(
+                "📥 تحميل بيانات الطبقة (بدون الهندسة) كـ CSV",
+                data=csv_bytes, file_name=f"{pg_table}_attributes.csv", mime="text/csv",
+            )
+
+        st.markdown("---")
+        st.markdown("**🔎 تنفيذ استعلام SQL / PostGIS مباشر على القاعدة**")
+        st.markdown("""
+        <div class="info-banner">
+            📌 يمكنك كتابة أي استعلام SQL هنا (مثال: <code>SELECT * FROM "V6" LIMIT 50</code>
+            أو استعلام مكاني مثل <code>ST_Area</code>, <code>ST_Intersects</code>, <code>ST_Buffer</code> ...).
+            إن كانت نتيجة الاستعلام تحتوي على عمود هندسة سيتم عرضها تلقائياً على الخريطة، وإلا ستظهر كجدول بيانات فقط.
+        </div>
+        """, unsafe_allow_html=True)
+
+        default_query = f'SELECT * FROM "{pg_schema}"."{pg_table}" LIMIT 100'
+        sql_query = st.text_area("الاستعلام SQL", value=default_query, height=120, key="pg_sql_query")
+        geom_col_guess = st.text_input("اسم عمود الهندسة المتوقع (لتفسير نتائج الاستعلام المكانية)", value="geom", key="pg_geom_guess")
+
+        if st.button("▶️ تنفيذ الاستعلام", use_container_width=True):
+            try:
+                engine = st.session_state.pg_engine or pg_get_engine(pg_host, pg_port, pg_dbname, pg_user, pg_password)
+                st.session_state.pg_engine = engine
+                with st.spinner("⏳ جارٍ تنفيذ الاستعلام..."):
+                    result, kind = pg_run_query(engine, sql_query, geom_col_guess=geom_col_guess)
+                st.session_state.pg_query_result = (result, kind)
+                st.success(f"✅ تم تنفيذ الاستعلام بنجاح — عدد الصفوف: {len(result)}")
+            except Exception as e:
+                st.session_state.pg_query_result = None
+                st.error(f"❌ خطأ في تنفيذ الاستعلام: {e}")
+
+        if st.session_state.pg_query_result is not None:
+            result, kind = st.session_state.pg_query_result
+            if kind == "geo" and len(result) > 0:
+                st.markdown("**🗺️ نتيجة الاستعلام (على الخريطة):**")
+                geom_col2 = result.geometry.name
+                bounds2 = result.total_bounds
+                center2 = [(bounds2[1] + bounds2[3]) / 2, (bounds2[0] + bounds2[2]) / 2]
+                m_q = make_base_map(center2, 13)
+                Fullscreen(title="ملء الشاشة").add_to(m_q)
+                folium.GeoJson(
+                    result.to_json(), name="query_result",
+                    style_function=lambda x: {
+                        "fillColor": "#e63946", "color": "#8a1230",
+                        "weight": 1.5, "fillOpacity": 0.35,
+                    },
+                ).add_to(m_q)
+                try:
+                    m_q.fit_bounds([[bounds2[1], bounds2[0]], [bounds2[3], bounds2[2]]])
+                except Exception:
+                    pass
+                st_folium(m_q, width=None, height=480, key="postgis_query_map")
+                st.dataframe(result.drop(columns=[geom_col2]), use_container_width=True)
+            else:
+                st.markdown("**📊 نتيجة الاستعلام (جدول بيانات):**")
+                st.dataframe(result, use_container_width=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Footer
